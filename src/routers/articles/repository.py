@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -81,6 +82,9 @@ async def _next_version_number(session: AsyncSession, id_article: uuid.UUID, pha
     return result.scalar_one() + 1
 
 
+_VERSION_INSERT_ATTEMPTS = 3
+
+
 async def add_article_version(
     session: AsyncSession,
     *,
@@ -89,17 +93,34 @@ async def add_article_version(
     file_path: str,
     submitted_by: uuid.UUID,
 ) -> ArticleVersion:
-    version_number = await _next_version_number(session, id_article, phase)
-    version = ArticleVersion(
-        id_article=id_article,
-        phase=phase,
-        version_number=version_number,
-        file_path=file_path,
-        submitted_by=submitted_by,
-    )
-    session.add(version)
-    await session.flush()
-    return version
+    """Appends a version row, allocating the next per-(article, phase) number.
+
+    Two concurrent submissions can read the same max and collide on the
+    UNIQUE(id_article, phase, version_number) constraint. Each attempt runs in
+    a SAVEPOINT so a violation can be rolled back without poisoning the caller's
+    transaction, then the number is recomputed and the insert retried.
+    """
+    for attempt in range(1, _VERSION_INSERT_ATTEMPTS + 1):
+        version_number = await _next_version_number(session, id_article, phase)
+        version = ArticleVersion(
+            id_article=id_article,
+            phase=phase,
+            version_number=version_number,
+            file_path=file_path,
+            submitted_by=submitted_by,
+        )
+        try:
+            async with session.begin_nested():
+                session.add(version)
+                await session.flush()
+        except IntegrityError:
+            if attempt == _VERSION_INSERT_ATTEMPTS:
+                raise
+            continue
+        return version
+
+    # Unreachable: the loop either returns or raises on the final attempt.
+    raise AssertionError("version insert loop exited without result")
 
 
 async def list_versions(session: AsyncSession, id_article: uuid.UUID) -> list[ArticleVersion]:
