@@ -89,10 +89,12 @@ async def create_article(
     return repo.to_article_out(article, "author", reviewers)
 
 
-def _check_view_permission(article, user: UserCtx) -> None:
+async def _check_view_permission(session, article, user: UserCtx) -> None:
     if user.role == "author" and str(article.id_user) != user.id_user:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
-    if user.role == "SC" and str(article.id_sc) != user.id_user:
+    if user.role == "SC" and not await repo.is_assigned(
+        session, article.id_article, uuid.UUID(user.id_user)
+    ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
 
 
@@ -105,7 +107,7 @@ async def get_article(
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
-    _check_view_permission(article, user)
+    await _check_view_permission(session, article, user)
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, user.role, reviewers)
 
@@ -386,14 +388,15 @@ async def submit_full_paper(
     )
     await session.flush()
 
-    sc_email = await repo.get_user_email(session, article.id_sc)
-    background_tasks.add_task(
-        emailer.send,
-        sc_email,
-        "Full paper submitted for review",
-        f"Article '{article.title}' full paper is ready for your review.",
-    )
     reviewers = await repo.list_reviewer_ids(session, id_article)
+    for id_reviewer in reviewers:
+        reviewer_email = await repo.get_user_email(session, id_reviewer)
+        background_tasks.add_task(
+            emailer.send,
+            reviewer_email,
+            "Full paper submitted for review",
+            f"Article '{article.title}' full paper is ready for your review.",
+        )
     return repo.to_article_out(article, "author", reviewers)
 
 
@@ -431,14 +434,15 @@ async def submit_revision(
     )
     await session.flush()
 
-    sc_email = await repo.get_user_email(session, article.id_sc)
-    background_tasks.add_task(
-        emailer.send,
-        sc_email,
-        "Revised full paper submitted for review",
-        f"Article '{article.title}' revised full paper is ready for your review.",
-    )
     reviewers = await repo.list_reviewer_ids(session, id_article)
+    for id_reviewer in reviewers:
+        reviewer_email = await repo.get_user_email(session, id_reviewer)
+        background_tasks.add_task(
+            emailer.send,
+            reviewer_email,
+            "Revised full paper submitted for review",
+            f"Article '{article.title}' revised full paper is ready for your review.",
+        )
     return repo.to_article_out(article, "author", reviewers)
 
 
@@ -484,7 +488,7 @@ async def list_article_versions(
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
-    _check_view_permission(article, user)
+    await _check_view_permission(session, article, user)
     versions = await repo.list_versions(session, id_article)
     return [ArticleVersionOut.model_validate(v) for v in versions]
 
