@@ -16,7 +16,7 @@
 - Storage credentials are placeholders (`storage_*` settings default to `""`); the upload endpoint must fail loudly (500, explicit message) if unconfigured rather than silently degrading.
 - Only PDF (`application/pdf`) is accepted by the upload endpoint.
 - `db/schema.sql` is the only source of truth for schema (no migration tool in this repo) — changes are direct edits, applied via a fresh `docker-compose down -v && docker-compose up -d` in dev.
-- This repo has no git initialized (verified: `git status` → "not a git repository"). Skip all `git commit` steps in this plan — after each task, just confirm tests pass and move on. If git is initialized later, commits can be backfilled.
+- Git was initialized on 2026-07-26 (repo had none before). Each task's implementer commits its own changes as usual under the subagent-driven-development process; there is no pre-existing history to preserve, so no special handling is needed beyond normal commit hygiene.
 
 ---
 
