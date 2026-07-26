@@ -5,14 +5,17 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 from ... import article_state, emailer, storage
 from ...deps import get_current_user, get_session, require_roles
 from ...schemas import (
+    AbstractAnnounceRequest,
     AbstractReviewRequest,
     ArticleAssignRequest,
     ArticleCreate,
     ArticleFullPaperRequest,
     ArticleOut,
+    ArticleReviewOut,
     ArticleUpdate,
     ArticleVersionOut,
     AssignReviewersRequest,
+    FullPaperAnnounceRequest,
     FullPaperReviewRequest,
     UploadResponse,
     UserCtx,
@@ -48,7 +51,11 @@ async def list_articles(
     user: UserCtx = Depends(get_current_user), session=Depends(get_session)
 ) -> list[ArticleOut]:
     articles = await repo.list_articles_for(session, user.role, user.id_user)
-    return [repo.to_article_out(a, user.role) for a in articles]
+    out = []
+    for a in articles:
+        reviewers = await repo.list_reviewer_ids(session, a.id_article)
+        out.append(repo.to_article_out(a, user.role, reviewers))
+    return out
 
 
 @router.post(
@@ -78,7 +85,8 @@ async def create_article(
         submitted_by=uuid.UUID(user.id_user),
     )
     await session.flush()
-    return repo.to_article_out(article, "author")
+    reviewers = await repo.list_reviewer_ids(session, article.id_article)
+    return repo.to_article_out(article, "author", reviewers)
 
 
 def _check_view_permission(article, user: UserCtx) -> None:
@@ -98,7 +106,8 @@ async def get_article(
     if article is None:
         raise _not_found()
     _check_view_permission(article, user)
-    return repo.to_article_out(article, user.role)
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, user.role, reviewers)
 
 
 @router.put("/{id_article}", response_model=ArticleOut)
@@ -120,7 +129,8 @@ async def update_article(
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(article, key, value)
     await session.flush()
-    return repo.to_article_out(article, "author")
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "author", reviewers)
 
 
 @router.delete(
@@ -219,42 +229,66 @@ async def review_article(
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
-    """SC reviews the abstract or the full paper. The body shape selects which:
-    `{"accept": bool}` for an abstract, `{"decision": "accept"|"revision"}` for
-    a full paper. The shape must match the phase the article is actually in."""
+    """An assigned SC records their own review of the current file version.
+
+    Body shape must match the phase: `{"accept": bool}` for an abstract,
+    `{"decision": "accept"|"revision"}` for a full paper. When the last
+    assigned reviewer submits, the article advances to *_review_complete and
+    the EIC can announce.
+    """
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
-    if str(article.id_sc) != user.id_user:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "not the assigned reviewer")
 
-    if article.status in article_state.ABSTRACT_REVIEWABLE:
+    id_reviewer = uuid.UUID(user.id_user)
+    if not await repo.is_assigned(session, id_article, id_reviewer):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not an assigned reviewer")
+
+    phase = _current_review_phase(article.status)
+    if phase is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"cannot review in status {article.status}")
+
+    if phase == "abstract":
         if not isinstance(body, AbstractReviewRequest):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 f"article is in abstract review (status {article.status}); "
                 'expected an abstract review body: {"accept": bool}',
             )
-        article.status = article_state.decide_abstract_review(body.accept)
-        if body.notes is not None:
-            article.sc_notes = body.notes
-    elif article.status in article_state.FULL_PAPER_REVIEWABLE:
+        decision = "accept" if body.accept else "reject"
+    else:
         if not isinstance(body, FullPaperReviewRequest):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 f"article is in full-paper review (status {article.status}); "
                 'expected a full-paper review body: {"decision": "accept"|"revision"}',
             )
-        article.status = article_state.decide_full_paper_review(body.decision)
-        if body.notes is not None:
-            article.sc_notes = body.notes
-        if body.id_recommended_journal is not None:
-            article.id_recommended_journal = body.id_recommended_journal
-    else:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"cannot review in status {article.status}")
+        decision = body.decision
 
+    version = await repo.latest_version(session, id_article, phase)
+    if version is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"article has no {phase} version to review"
+        )
+    if await repo.has_reviewed(session, version.id_version, id_reviewer):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "you have already reviewed this version"
+        )
+
+    await repo.add_review(
+        session,
+        id_version=version.id_version,
+        id_reviewer=id_reviewer,
+        decision=decision,
+        notes=body.notes,
+    )
+
+    if await repo.all_assigned_have_reviewed(session, id_article, version.id_version):
+        article.status = article_state.review_complete_status_for_phase(phase)
     await session.flush()
-    return repo.to_article_out(article, "SC")
+
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "SC", reviewers)
 
 
 @router.post(
@@ -264,23 +298,47 @@ async def review_article(
 )
 async def announce_article(
     id_article: uuid.UUID,
+    body: AbstractAnnounceRequest | FullPaperAnnounceRequest,
     background_tasks: BackgroundTasks,
     session=Depends(get_session),
 ) -> ArticleOut:
-    """EIC announces the SC's decision (abstract or full paper) to the author."""
+    """EIC weighs the reviews and announces the outcome to the author.
+
+    Abstract phase: `{"decision": "accept"|"reject"}`.
+    Full-paper phase: `{"decision": "accept"|"revision"}` plus
+    `id_recommended_journal` when accepting.
+
+    Requires every assigned reviewer to have submitted (status *_review_complete).
+    """
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
 
-    try:
-        new_status = article_state.announce_result(article.status)
-    except ValueError:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"cannot announce in status {article.status}")
+    if article.status in article_state.ABSTRACT_ANNOUNCEABLE:
+        phase = "abstract"
+        if not isinstance(body, AbstractAnnounceRequest):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                'article is in abstract review; expected {"decision": "accept"|"reject"}',
+            )
+        decision = body.decision
+    elif article.status in article_state.FULL_PAPER_ANNOUNCEABLE:
+        phase = "full_paper"
+        if not isinstance(body, FullPaperAnnounceRequest):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                'article is in full-paper review; expected '
+                '{"decision": "accept"|"revision", "id_recommended_journal": uuid}',
+            )
+        decision = body.decision
+        if body.id_recommended_journal is not None:
+            article.id_recommended_journal = body.id_recommended_journal
+    else:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"cannot announce in status {article.status}"
+        )
 
-    if new_status == "accepted" and article.id_recommended_journal is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "id_recommended_journal not set")
-
-    article.status = new_status
+    article.status = article_state.announced_status_for(phase, decision)
     await session.flush()
 
     author_email = await repo.get_user_email(session, article.id_user)
@@ -290,7 +348,8 @@ async def announce_article(
         f"Update on your article '{article.title}'",
         f"Your article status is now: {article.status}.",
     )
-    return repo.to_article_out(article, "EIC")
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "EIC", reviewers)
 
 
 @router.post(
@@ -334,7 +393,8 @@ async def submit_full_paper(
         "Full paper submitted for review",
         f"Article '{article.title}' full paper is ready for your review.",
     )
-    return repo.to_article_out(article, "author")
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "author", reviewers)
 
 
 @router.post(
@@ -378,7 +438,8 @@ async def submit_revision(
         "Revised full paper submitted for review",
         f"Article '{article.title}' revised full paper is ready for your review.",
     )
-    return repo.to_article_out(article, "author")
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "author", reviewers)
 
 
 @router.post("/{id_article}/upload", response_model=UploadResponse)
@@ -490,3 +551,29 @@ async def unassign_reviewer(
 
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "EIC", reviewers)
+
+
+@router.get("/{id_article}/reviews", response_model=list[ArticleReviewOut])
+async def list_article_reviews(
+    id_article: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> list[ArticleReviewOut]:
+    """Blind review: an SC sees only their own reviews, EIC/admin see all.
+    Authors see none — reviewer feedback reaches them via the EIC's
+    announcement, not directly."""
+    article = await repo.get_article(session, id_article)
+    if article is None:
+        raise _not_found()
+
+    if user.role == "author":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "authors cannot read reviews directly")
+
+    only_reviewer = uuid.UUID(user.id_user) if user.role == "SC" else None
+    if only_reviewer is not None and not await repo.is_assigned(
+        session, id_article, only_reviewer
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not an assigned reviewer")
+
+    reviews = await repo.list_reviews_for_article(session, id_article, only_reviewer)
+    return [ArticleReviewOut.model_validate(r) for r in reviews]
