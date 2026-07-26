@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "noreply@simit.local"
 
+    # ---- Storage (S3-compatible: AWS S3, MinIO, Cloudflare R2, ...) ----
+    # All empty by default — placeholders until real credentials exist.
+    storage_base_url: str = ""
+    storage_bucket: str = ""
+    storage_access_key: str = ""
+    storage_secret_key: str = ""
+    storage_region: str = "auto"
+
 
 # Singleton — import this everywhere.
 settings = Settings()
