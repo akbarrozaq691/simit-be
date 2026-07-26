@@ -5,13 +5,11 @@ from src.status import AUTHOR_STATUS_MAP, to_author_view
 ALL_STATUSES = [
     "submitted",
     "assigned_to_sc",
-    "abstract_decided_accept",
-    "abstract_decided_reject",
+    "abstract_review_complete",
     "abstract_accepted",
     "rejected",
     "full_paper_submitted",
-    "full_paper_decided_revision",
-    "full_paper_decided_accept",
+    "full_paper_review_complete",
     "revision_needed",
     "accepted",
 ]
@@ -22,14 +20,12 @@ def test_every_real_status_has_an_author_mapping(real_status):
     assert real_status in AUTHOR_STATUS_MAP
 
 
-def test_internal_decided_states_hidden_as_under_review():
+def test_internal_states_hidden_as_under_review():
     for internal in (
         "assigned_to_sc",
-        "abstract_decided_accept",
-        "abstract_decided_reject",
+        "abstract_review_complete",
         "full_paper_submitted",
-        "full_paper_decided_revision",
-        "full_paper_decided_accept",
+        "full_paper_review_complete",
     ):
         assert AUTHOR_STATUS_MAP[internal] == "under_review"
 
