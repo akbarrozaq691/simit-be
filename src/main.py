@@ -11,6 +11,7 @@ from .routers.auth.router import router as auth_router
 from .routers.reference.router import journal_router, occupation_router, role_router
 from .routers.timeline.router import router as timeline_router
 from .routers.topics.router import router as topics_router
+from .routers.uploads.router import router as uploads_router
 from .routers.users.router import router as users_router
 from .settings import settings
 
@@ -32,6 +33,7 @@ app.include_router(journal_router, prefix=p)
 app.include_router(timeline_router, prefix=p)
 app.include_router(topics_router, prefix=p)
 app.include_router(articles_router, prefix=p)
+app.include_router(uploads_router, prefix=p)
 app.include_router(audit_router, prefix=p)
 
 

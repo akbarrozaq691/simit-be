@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 
-from ... import article_state, audit, emailer, storage
+from ... import article_state, audit, emailer, uploads
 from ...deps import get_current_user, get_session, require_roles
 from ...schemas import (
     AbstractAnnounceRequest,
@@ -20,16 +20,9 @@ from ...schemas import (
     UploadResponse,
     UserCtx,
 )
-from ...settings import settings
 from . import repository as repo
 
 router = APIRouter(prefix="/articles", tags=["articles"])
-
-MAX_UPLOAD_BYTES = settings.max_upload_mb * 1024 * 1024
-
-
-def _exceeds_upload_limit(content: bytes) -> bool:
-    return len(content) > MAX_UPLOAD_BYTES
 
 
 def _not_found() -> HTTPException:
@@ -604,29 +597,19 @@ async def upload_article_file(
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> UploadResponse:
-    """Uploads a PDF and returns its storage path. Does not mutate the
-    article — the client passes the returned file_path into create/full-paper/
-    revision requests separately, same as the existing string-path fields."""
+    """Uploads a PDF against an existing article and returns its storage path.
+
+    Superseded by `POST /uploads`, which does not require the article to exist
+    first — kept for callers already using this path. Validation and storage
+    are shared via `src/uploads.py` so the two cannot drift.
+    """
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
     if str(article.id_user) != user.id_user:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
-    if file.content_type != "application/pdf":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "only PDF files are accepted")
 
-    # Read one byte past the limit: enough to detect an oversized upload
-    # without ever buffering the whole thing.
-    content = await file.read(MAX_UPLOAD_BYTES + 1)
-    if _exceeds_upload_limit(content):
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"file too large (max {settings.max_upload_mb} MB)",
-        )
-    try:
-        path = await storage.client.upload(file.filename or "upload.pdf", content, file.content_type)
-    except storage.StorageNotConfiguredError as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
+    path = await uploads.store_pdf(file)
     return UploadResponse(file_path=path)
 
 
