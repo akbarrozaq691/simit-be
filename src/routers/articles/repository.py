@@ -1,10 +1,10 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...models import Article, User
+from ...models import Article, ArticleVersion, User
 from ...schemas import ArticleOut
 from ...status import AUTHOR_STATUS_MAP
 
@@ -70,3 +70,42 @@ async def get_user_email(session: AsyncSession, id_user: uuid.UUID | None) -> st
         return None
     user = await session.get(User, id_user)
     return user.email if user else None
+
+
+async def _next_version_number(session: AsyncSession, id_article: uuid.UUID, phase: str) -> int:
+    result = await session.execute(
+        select(func.coalesce(func.max(ArticleVersion.version_number), 0)).where(
+            ArticleVersion.id_article == id_article, ArticleVersion.phase == phase
+        )
+    )
+    return result.scalar_one() + 1
+
+
+async def add_article_version(
+    session: AsyncSession,
+    *,
+    id_article: uuid.UUID,
+    phase: str,
+    file_path: str,
+    submitted_by: uuid.UUID,
+) -> ArticleVersion:
+    version_number = await _next_version_number(session, id_article, phase)
+    version = ArticleVersion(
+        id_article=id_article,
+        phase=phase,
+        version_number=version_number,
+        file_path=file_path,
+        submitted_by=submitted_by,
+    )
+    session.add(version)
+    await session.flush()
+    return version
+
+
+async def list_versions(session: AsyncSession, id_article: uuid.UUID) -> list[ArticleVersion]:
+    result = await session.execute(
+        select(ArticleVersion)
+        .where(ArticleVersion.id_article == id_article)
+        .order_by(ArticleVersion.phase, ArticleVersion.version_number)
+    )
+    return list(result.scalars().all())
