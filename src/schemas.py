@@ -4,7 +4,7 @@ compact layout — split per-domain if this grows past a few hundred lines."""
 import datetime as dt
 import uuid
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -32,14 +32,15 @@ class RoleName(str, Enum):
 class ArticleStatus(str, Enum):
     submitted = "submitted"
     assigned_to_sc = "assigned_to_sc"
-    under_review = "under_review"
-    revision_needed = "revision_needed"
-    passed_review = "passed_review"
-    announced = "announced"
-    abstract_accepted = "abstract_accepted"  # author-facing alias for `announced`
-    full_paper_submitted = "full_paper_submitted"
+    abstract_decided_accept = "abstract_decided_accept"
+    abstract_decided_reject = "abstract_decided_reject"
+    abstract_accepted = "abstract_accepted"
     rejected = "rejected"
-    completed = "completed"
+    full_paper_submitted = "full_paper_submitted"
+    full_paper_decided_revision = "full_paper_decided_revision"
+    full_paper_decided_accept = "full_paper_decided_accept"
+    revision_needed = "revision_needed"
+    accepted = "accepted"
 
 
 class UserCtx(BaseModel):
@@ -240,10 +241,35 @@ class ArticleAssignRequest(BaseModel):
     id_sc: uuid.UUID
 
 
-class ArticleReviewRequest(BaseModel):
-    lolos: bool
+class AbstractReviewRequest(BaseModel):
+    accept: bool
+    notes: str | None = None
+
+
+class FullPaperReviewRequest(BaseModel):
+    decision: Literal["accept", "revision"]
     notes: str | None = None
     id_recommended_journal: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _journal_required_on_accept(self) -> "FullPaperReviewRequest":
+        if self.decision == "accept" and self.id_recommended_journal is None:
+            raise ValueError("id_recommended_journal is required when decision is 'accept'")
+        return self
+
+
+class ArticleVersionOut(ORMModel):
+    id_version: uuid.UUID
+    id_article: uuid.UUID
+    phase: str
+    version_number: int
+    file_path: str
+    submitted_by: uuid.UUID
+    submitted_at: dt.datetime
+
+
+class UploadResponse(BaseModel):
+    file_path: str
 
 
 class ArticleFullPaperRequest(BaseModel):
