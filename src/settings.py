@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     storage_secret_key: str = ""
     storage_region: str = "auto"
 
+    # ---- Uploads ----
+    # Max accepted PDF size for POST /articles/{id}/upload.
+    max_upload_mb: int = 10
+
 
 # Singleton — import this everywhere.
 settings = Settings()
