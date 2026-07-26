@@ -18,13 +18,15 @@ from .database import Base
 ArticleStatusEnum = PGEnum(
     "submitted",
     "assigned_to_sc",
-    "under_review",
-    "revision_needed",
-    "passed_review",
-    "announced",
-    "full_paper_submitted",
+    "abstract_decided_accept",
+    "abstract_decided_reject",
+    "abstract_accepted",
     "rejected",
-    "completed",
+    "full_paper_submitted",
+    "full_paper_decided_revision",
+    "full_paper_decided_accept",
+    "revision_needed",
+    "accepted",
     name="article_status",
     create_type=False,  # already created by db/schema.sql
 )
@@ -143,6 +145,24 @@ class Article(Base):
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
     updated_at: Mapped[dt.datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class ArticleVersion(Base):
+    __tablename__ = "article_version"
+
+    id_version: Mapped[uuid.UUID] = _uuid_pk()
+    id_article: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("articles.id_article", ondelete="CASCADE"), nullable=False
+    )
+    phase: Mapped[str] = mapped_column(String(20), nullable=False)
+    version_number: Mapped[int] = mapped_column(nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    submitted_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id_user"), nullable=False
+    )
+    submitted_at: Mapped[dt.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
 
