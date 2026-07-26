@@ -17,8 +17,8 @@ def _ensure_self_or_admin(user: UserCtx, id_user: uuid.UUID) -> None:
 
 
 @router.get("", response_model=list[UserOut], dependencies=[Depends(require_roles("admin"))])
-async def list_users(session=Depends(get_session)) -> list[UserOut]:
-    users = await repo.list_users(session)
+async def list_users(include_deleted: bool = False, session=Depends(get_session)) -> list[UserOut]:
+    users = await repo.list_users(session, include_deleted=include_deleted)
     return [repo.to_user_out(u) for u in users]
 
 
@@ -88,6 +88,22 @@ async def update_user(
     dependencies=[Depends(require_roles("admin"))],
 )
 async def delete_user(id_user: uuid.UUID, session=Depends(get_session)) -> None:
-    deleted = await repo.delete_user(session, id_user)
-    if not deleted:
+    """Archives the user. Previously a hard delete, which raised a raw
+    ForeignKeyViolationError (500) for any user referenced by an article as
+    author or reviewer."""
+    if not await repo.soft_delete_user(session, id_user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+
+
+@router.post(
+    "/{id_user}/restore",
+    response_model=UserOut,
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def restore_user(id_user: uuid.UUID, session=Depends(get_session)) -> UserOut:
+    user = await repo.restore_user(session, id_user)
+    if user is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "user not found or not archived"
+        )
+    return repo.to_user_out(user)

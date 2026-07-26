@@ -43,7 +43,9 @@ async def register(body: RegisterRequest, session=Depends(get_session)) -> AuthU
 @router.post("/login", response_model=TokenOut)
 async def login(body: LoginRequest, session=Depends(get_session)) -> TokenOut:
     result = await session.execute(
-        select(User).options(selectinload(User.role)).where(User.email == body.email)
+        select(User)
+        .options(selectinload(User.role))
+        .where(User.email == body.email, User.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
 
