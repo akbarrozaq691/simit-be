@@ -67,15 +67,17 @@ CREATE TABLE journal (
 -- status tracks pipeline: EIC -> SC -> (lolos? back to EIC) -> announce -> full paper -> selesai
 
 CREATE TYPE article_status AS ENUM (
-    'submitted',            -- peserta submit abstrak
-    'assigned_to_sc',       -- EIC delivery task ke SC
-    'under_review',         -- SC lagi review
-    'revision_needed',      -- lolos = No, balik ke EIC
-    'passed_review',        -- lolos = Yes, balik ke EIC
-    'announced',            -- EIC announce hasil ke peserta
-    'full_paper_submitted', -- peserta submit full paper
-    'rejected',             -- pipeline selesai, tidak lolos
-    'completed'             -- pipeline selesai, full paper diterima
+    'submitted',                    -- peserta submit abstrak
+    'assigned_to_sc',                -- EIC delivery task ke SC (juga: SC review queue)
+    'abstract_decided_accept',       -- internal: SC putuskan lolos, nunggu EIC announce
+    'abstract_decided_reject',       -- internal: SC putuskan tolak, nunggu EIC announce
+    'abstract_accepted',             -- EIC announce: abstrak diterima, author submit full paper
+    'rejected',                      -- pipeline selesai, tidak lolos (terminal)
+    'full_paper_submitted',          -- full paper (baru atau revisi) masuk antrian SC
+    'full_paper_decided_revision',   -- internal: SC minta revisi, nunggu EIC announce
+    'full_paper_decided_accept',     -- internal: SC terima, nunggu EIC announce
+    'revision_needed',               -- EIC announce: author harus resubmit full paper
+    'accepted'                       -- EIC announce: full paper diterima (terminal, ada id_recommended_journal)
 );
 
 CREATE TABLE articles (
@@ -101,6 +103,24 @@ CREATE TABLE articles (
 CREATE INDEX idx_articles_status ON articles(status);
 CREATE INDEX idx_articles_id_user ON articles(id_user);
 CREATE INDEX idx_articles_id_sc ON articles(id_sc);
+
+-- === Article file version history ===
+-- One row per abstract/full-paper file submission (initial + every revision).
+-- articles.abstract_file_path / full_paper_file_path always point at the
+-- latest file for that phase; full history lives here.
+
+CREATE TABLE article_version (
+    id_version      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id_article      UUID NOT NULL REFERENCES articles(id_article) ON DELETE CASCADE,
+    phase           VARCHAR(20) NOT NULL CHECK (phase IN ('abstract', 'full_paper')),
+    version_number  INT NOT NULL,
+    file_path       VARCHAR(500) NOT NULL,
+    submitted_by    UUID NOT NULL REFERENCES users(id_user),
+    submitted_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id_article, phase, version_number)
+);
+
+CREATE INDEX idx_article_version_article ON article_version(id_article);
 
 -- === Timeline (jadwal penting: batas submit abstrak, batas review, pengumuman, dll) ===
 
