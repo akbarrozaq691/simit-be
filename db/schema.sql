@@ -65,8 +65,8 @@ CREATE TABLE journal (
 
 -- === Articles ===
 -- status tracks two-phase pipeline: abstract review (SC decides, EIC announces) then full-paper review (SC decides, EIC announces).
--- Authors see only public states (submitted, abstract_accepted/rejected, full_paper_submitted, accepted/revision_needed);
--- SC review decisions (*_decided_*) are internal and shown to authors as "under_review".
+-- Authors see only: submitted, under_review (masks internal *_decided_*, assigned_to_sc, full_paper_submitted), abstract_accepted, revision_needed, accepted, rejected.
+-- SC/EIC/admin see the real internal status values.
 
 CREATE TYPE article_status AS ENUM (
     'submitted',                    -- peserta submit abstrak
