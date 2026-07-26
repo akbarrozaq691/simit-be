@@ -150,6 +150,26 @@ CREATE TABLE article_review (
 
 CREATE INDEX idx_article_review_version ON article_review(id_version);
 
+-- === Audit log (admin-only action history) ===
+-- Explicit, significant events only — written at the handler inside the same
+-- transaction as the change they describe, so a rolled-back request leaves no
+-- phantom audit row. id_actor is nullable and NOT cascading: an audit trail
+-- that vanishes with its actor is not an audit trail.
+
+CREATE TABLE audit_log (
+    id_audit      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id_actor      UUID REFERENCES users(id_user),
+    action        VARCHAR(50) NOT NULL,
+    entity_type   VARCHAR(30) NOT NULL,
+    entity_id     UUID,
+    detail        JSONB,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_audit_log_created_at ON audit_log(created_at DESC);
+CREATE INDEX idx_audit_log_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX idx_audit_log_actor ON audit_log(id_actor);
+
 -- === Timeline (jadwal penting: batas submit abstrak, batas review, pengumuman, dll) ===
 
 CREATE TABLE timeline (

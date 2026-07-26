@@ -10,7 +10,7 @@ import uuid
 
 from sqlalchemy import CheckConstraint, ForeignKey, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -193,6 +193,20 @@ class ArticleReview(Base):
     decision: Mapped[str] = mapped_column(String(20), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     reviewed_at: Mapped[dt.datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id_audit: Mapped[uuid.UUID] = _uuid_pk()
+    id_actor: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id_user"))
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    detail: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[dt.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
 
