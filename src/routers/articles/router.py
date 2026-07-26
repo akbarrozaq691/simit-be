@@ -138,7 +138,7 @@ async def assign_article(
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
-    if article.status not in ("submitted", "revision_needed"):
+    if article.status != "submitted":
         raise HTTPException(status.HTTP_409_CONFLICT, f"cannot assign in status {article.status}")
 
     article.id_sc = body.id_sc
