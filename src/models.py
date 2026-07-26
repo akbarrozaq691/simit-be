@@ -18,13 +18,11 @@ from .database import Base
 ArticleStatusEnum = PGEnum(
     "submitted",
     "assigned_to_sc",
-    "abstract_decided_accept",
-    "abstract_decided_reject",
+    "abstract_review_complete",
     "abstract_accepted",
     "rejected",
     "full_paper_submitted",
-    "full_paper_decided_revision",
-    "full_paper_decided_accept",
+    "full_paper_review_complete",
     "revision_needed",
     "accepted",
     name="article_status",
@@ -134,13 +132,11 @@ class Article(Base):
     status: Mapped[str] = mapped_column(ArticleStatusEnum, server_default="submitted")
 
     id_user: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id_user"), nullable=False)
-    id_sc: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id_user"))
     id_topic: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("main_topic.id_topic"))
     id_recommended_journal: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("journal.id_journal")
     )
 
-    sc_notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
@@ -163,6 +159,40 @@ class ArticleVersion(Base):
         ForeignKey("users.id_user"), nullable=False
     )
     submitted_at: Mapped[dt.datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class ArticleReviewer(Base):
+    __tablename__ = "article_reviewer"
+    __table_args__ = (UniqueConstraint("id_article", "id_reviewer"),)
+
+    id_assignment: Mapped[uuid.UUID] = _uuid_pk()
+    id_article: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("articles.id_article", ondelete="CASCADE"), nullable=False
+    )
+    id_reviewer: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id_user"), nullable=False
+    )
+    assigned_at: Mapped[dt.datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class ArticleReview(Base):
+    __tablename__ = "article_review"
+    __table_args__ = (UniqueConstraint("id_version", "id_reviewer"),)
+
+    id_review: Mapped[uuid.UUID] = _uuid_pk()
+    id_version: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("article_version.id_version", ondelete="CASCADE"), nullable=False
+    )
+    id_reviewer: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id_user"), nullable=False
+    )
+    decision: Mapped[str] = mapped_column(String(20), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[dt.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
 
