@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.db
+.swarm/
+.claude-flow/
+.superpowers/
+.pytest_cache/

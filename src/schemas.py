@@ -1,0 +1,250 @@
+"""Pydantic request/response schemas for every resource. Kept in one file for a
+compact layout — split per-domain if this grows past a few hundred lines."""
+
+import datetime as dt
+import uuid
+from enum import Enum
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+# Plain "user@domain.tld" shape check — deliberately not pydantic.EmailStr,
+# which rejects RFC 6761 special-use domains like `.local` that dev/seed
+# accounts here use (admin@simit.local, etc).
+EmailStr = Annotated[
+    str, StringConstraints(strip_whitespace=True, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+]
+
+
+class ORMModel(BaseModel):
+    """Base for response schemas built from SQLAlchemy ORM instances."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RoleName(str, Enum):
+    admin = "admin"
+    eic = "EIC"
+    sc = "SC"
+    author = "author"
+
+
+class ArticleStatus(str, Enum):
+    submitted = "submitted"
+    assigned_to_sc = "assigned_to_sc"
+    under_review = "under_review"
+    revision_needed = "revision_needed"
+    passed_review = "passed_review"
+    announced = "announced"
+    abstract_accepted = "abstract_accepted"  # author-facing alias for `announced`
+    full_paper_submitted = "full_paper_submitted"
+    rejected = "rejected"
+    completed = "completed"
+
+
+class UserCtx(BaseModel):
+    """Decoded JWT identity, injected via Depends(get_current_user)."""
+
+    id_user: str
+    role: str
+
+
+# ---- Auth ----
+
+class RegisterRequest(BaseModel):
+    user_name: str
+    email: EmailStr
+    password: str = Field(min_length=6)
+    occupation_name: str
+    institution_name: str | None = None
+    phone_number: str | None = None
+
+
+class AuthUserOut(ORMModel):
+    id_user: uuid.UUID
+    user_name: str
+    email: EmailStr
+    role: str
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenOut(ORMModel):
+    access_token: str
+    token_type: str = "Bearer"
+    id_user: uuid.UUID
+    user_name: str
+    role: str
+
+
+# ---- Users ----
+
+class UserCreate(BaseModel):
+    user_name: str
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name_role: RoleName
+    institution_name: str | None = None
+    phone_number: str | None = None
+    occupation_name: str | None = None
+
+
+class UserUpdate(BaseModel):
+    user_name: str | None = None
+    institution_name: str | None = None
+    phone_number: str | None = None
+    password: str | None = Field(default=None, min_length=6)
+
+
+class UserOut(ORMModel):
+    id_user: uuid.UUID
+    user_name: str
+    institution_name: str | None
+    email: EmailStr
+    phone_number: str | None
+    created_at: dt.datetime
+    role: str
+    occupation_name: str | None = None
+
+
+# ---- Reference data: role / occupation / journal ----
+
+class RoleCreate(BaseModel):
+    name_role: str
+
+
+class RoleOut(ORMModel):
+    id_role: uuid.UUID
+    name_role: str
+
+
+class OccupationCreate(BaseModel):
+    occupation_name: str
+
+
+class OccupationOut(ORMModel):
+    id_occupation: uuid.UUID
+    occupation_name: str
+
+
+class JournalCreate(BaseModel):
+    journal_name: str
+
+
+class JournalOut(ORMModel):
+    id_journal: uuid.UUID
+    journal_name: str
+
+
+# ---- Timeline ----
+
+class TimelineCreate(BaseModel):
+    title: str
+    description: str | None = None
+    start_date: dt.datetime
+    end_date: dt.datetime
+
+    @model_validator(mode="after")
+    def _check_date_range(self) -> "TimelineCreate":
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be >= start_date")
+        return self
+
+
+class TimelineUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    start_date: dt.datetime | None = None
+    end_date: dt.datetime | None = None
+
+
+class TimelineOut(ORMModel):
+    id_timeline: uuid.UUID
+    title: str
+    description: str | None
+    start_date: dt.datetime
+    end_date: dt.datetime
+    created_at: dt.datetime
+
+
+# ---- Topics ----
+
+class TopicCreate(BaseModel):
+    topic_name: str
+
+
+class TopicOut(ORMModel):
+    id_topic: uuid.UUID
+    topic_name: str
+
+
+class SubTopicCreate(BaseModel):
+    id_topic: uuid.UUID
+    name: str
+
+
+class SubTopicOut(ORMModel):
+    id_sub_topic: uuid.UUID
+    name: str
+    id_topic: uuid.UUID
+
+
+class TopicWithSubtopics(TopicOut):
+    stem: list[SubTopicOut] = []
+    humanity: list[SubTopicOut] = []
+    interdisciplinary: list[SubTopicOut] = []
+
+
+# ---- Articles ----
+
+class ArticleCreate(BaseModel):
+    title: str
+    authors: str
+    abstract: str
+    keywords: str | None = None
+    abstract_file_path: str
+    id_topic: uuid.UUID | None = None
+
+
+class ArticleUpdate(BaseModel):
+    title: str | None = None
+    authors: str | None = None
+    abstract: str | None = None
+    keywords: str | None = None
+    abstract_file_path: str | None = None
+    id_topic: uuid.UUID | None = None
+
+
+class ArticleOut(ORMModel):
+    id_article: uuid.UUID
+    title: str
+    authors: str
+    abstract: str
+    keywords: str | None
+    abstract_file_path: str
+    full_paper_file_path: str | None
+    status: str
+    id_user: uuid.UUID
+    id_sc: uuid.UUID | None
+    id_topic: uuid.UUID | None
+    id_recommended_journal: uuid.UUID | None
+    sc_notes: str | None
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class ArticleAssignRequest(BaseModel):
+    id_sc: uuid.UUID
+
+
+class ArticleReviewRequest(BaseModel):
+    lolos: bool
+    notes: str | None = None
+    id_recommended_journal: uuid.UUID | None = None
+
+
+class ArticleFullPaperRequest(BaseModel):
+    full_paper_file_path: str
