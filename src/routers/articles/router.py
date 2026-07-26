@@ -12,6 +12,7 @@ from ...schemas import (
     ArticleOut,
     ArticleUpdate,
     ArticleVersionOut,
+    AssignReviewersRequest,
     FullPaperReviewRequest,
     UploadResponse,
     UserCtx,
@@ -30,6 +31,16 @@ def _exceeds_upload_limit(content: bytes) -> bool:
 
 def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, "article not found")
+
+
+def _current_review_phase(article_status: str) -> str | None:
+    """Which phase is actively under review, or None if the article is not in
+    a reviewable state."""
+    if article_status in article_state.ABSTRACT_REVIEWABLE:
+        return "abstract"
+    if article_status in article_state.FULL_PAPER_REVIEWABLE:
+        return "full_paper"
+    return None
 
 
 @router.get("", response_model=list[ArticleOut])
@@ -125,6 +136,54 @@ async def delete_article(id_article: uuid.UUID, session=Depends(get_session)) ->
     await session.flush()
 
 
+async def _assign_reviewers(
+    session,
+    article,
+    id_reviewers: list[uuid.UUID],
+    override_coi: bool,
+    background_tasks: BackgroundTasks,
+) -> None:
+    """Validates and assigns reviewers, emailing each newly assigned one.
+
+    Shared by POST /reviewers and the single-reviewer POST /assign shortcut.
+    Raises 400 for non-SC users and 409 for a COI the caller did not override.
+    """
+    author_institution = await repo.get_user_institution(session, article.id_user)
+
+    for id_reviewer in id_reviewers:
+        role = await repo.get_user_role(session, id_reviewer)
+        if role != "SC":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"{id_reviewer} does not belong to a SC user"
+            )
+        if not override_coi:
+            reviewer_institution = await repo.get_user_institution(session, id_reviewer)
+            if article_state.institutions_conflict(author_institution, reviewer_institution):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"conflict of interest: reviewer {id_reviewer} shares the author's "
+                    f"institution ({reviewer_institution}); pass override_coi=true to assign anyway",
+                )
+
+    newly_assigned = []
+    for id_reviewer in id_reviewers:
+        if await repo.add_reviewer(session, article.id_article, id_reviewer):
+            newly_assigned.append(id_reviewer)
+
+    if article.status == "submitted":
+        article.status = "assigned_to_sc"
+    await session.flush()
+
+    for id_reviewer in newly_assigned:
+        email = await repo.get_user_email(session, id_reviewer)
+        background_tasks.add_task(
+            emailer.send,
+            email,
+            "New article assigned for review",
+            f"Article '{article.title}' has been assigned to you for review.",
+        )
+
+
 @router.post(
     "/{id_article}/assign",
     response_model=ArticleOut,
@@ -136,29 +195,17 @@ async def assign_article(
     background_tasks: BackgroundTasks,
     session=Depends(get_session),
 ) -> ArticleOut:
-    """EIC delivers the abstract to a SC reviewer."""
-    sc_role = await repo.get_user_role(session, body.id_sc)
-    if sc_role != "SC":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "id_sc must belong to a SC user")
-
+    """Single-reviewer shortcut, kept for backward compatibility.
+    Prefer POST /articles/{id}/reviewers for assigning several at once."""
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
     if article.status != "submitted":
         raise HTTPException(status.HTTP_409_CONFLICT, f"cannot assign in status {article.status}")
 
-    article.id_sc = body.id_sc
-    article.status = "assigned_to_sc"
-    await session.flush()
-
-    sc_email = await repo.get_user_email(session, article.id_sc)
-    background_tasks.add_task(
-        emailer.send,
-        sc_email,
-        "New abstract assigned for review",
-        f"Article '{article.title}' has been assigned to you for review.",
-    )
-    return repo.to_article_out(article, "EIC")
+    await _assign_reviewers(session, article, [body.id_sc], body.override_coi, background_tasks)
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "EIC", reviewers)
 
 
 @router.post(
@@ -379,3 +426,67 @@ async def list_article_versions(
     _check_view_permission(article, user)
     versions = await repo.list_versions(session, id_article)
     return [ArticleVersionOut.model_validate(v) for v in versions]
+
+
+@router.post(
+    "/{id_article}/reviewers",
+    response_model=ArticleOut,
+    dependencies=[Depends(require_roles("admin", "EIC"))],
+)
+async def assign_reviewers(
+    id_article: uuid.UUID,
+    body: AssignReviewersRequest,
+    background_tasks: BackgroundTasks,
+    session=Depends(get_session),
+) -> ArticleOut:
+    """EIC assigns one or more SC reviewers. Additive: call again to add more.
+    Re-assigning an already-assigned reviewer is a no-op, not an error."""
+    article = await repo.get_article(session, id_article)
+    if article is None:
+        raise _not_found()
+    if article.status not in ("submitted", "assigned_to_sc", "full_paper_submitted"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"cannot assign reviewers in status {article.status}"
+        )
+
+    await _assign_reviewers(
+        session, article, body.id_reviewers, body.override_coi, background_tasks
+    )
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "EIC", reviewers)
+
+
+@router.delete(
+    "/{id_article}/reviewers/{id_reviewer}",
+    response_model=ArticleOut,
+    dependencies=[Depends(require_roles("admin", "EIC"))],
+)
+async def unassign_reviewer(
+    id_article: uuid.UUID,
+    id_reviewer: uuid.UUID,
+    session=Depends(get_session),
+) -> ArticleOut:
+    """Unassigns a reviewer — the escape hatch for an unresponsive reviewer
+    blocking the announce gate. Any review they already submitted is kept.
+
+    If the remaining assigned reviewers have all submitted for the current
+    version, the article advances to *_review_complete, exactly as it would
+    have when the last review landed.
+    """
+    article = await repo.get_article(session, id_article)
+    if article is None:
+        raise _not_found()
+    if not await repo.remove_reviewer(session, id_article, id_reviewer):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "reviewer not assigned to this article")
+
+    phase = _current_review_phase(article.status)
+    if phase is not None:
+        version = await repo.latest_version(session, id_article, phase)
+        if version is not None and await repo.all_assigned_have_reviewed(
+            session, id_article, version.id_version
+        ):
+            article.status = article_state.review_complete_status_for_phase(phase)
+    await session.flush()
+
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "EIC", reviewers)
