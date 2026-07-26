@@ -48,9 +48,17 @@ def _current_review_phase(article_status: str) -> str | None:
 
 @router.get("", response_model=list[ArticleOut])
 async def list_articles(
-    user: UserCtx = Depends(get_current_user), session=Depends(get_session)
+    include_deleted: bool = False,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
 ) -> list[ArticleOut]:
-    articles = await repo.list_articles_for(session, user.role, user.id_user)
+    if include_deleted and user.role != "admin":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "only admin may list archived articles"
+        )
+    articles = await repo.list_articles_for(
+        session, user.role, user.id_user, include_deleted=include_deleted
+    )
     out = []
     for a in articles:
         reviewers = await repo.list_reviewer_ids(session, a.id_article)
@@ -104,7 +112,10 @@ async def get_article(
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
-    article = await repo.get_article(session, id_article)
+    # Admin can inspect an archive; everyone else sees a 404 for it.
+    article = await repo.get_article(
+        session, id_article, include_deleted=(user.role == "admin")
+    )
     if article is None:
         raise _not_found()
     await _check_view_permission(session, article, user)
@@ -141,11 +152,28 @@ async def update_article(
     dependencies=[Depends(require_roles("admin"))],
 )
 async def delete_article(id_article: uuid.UUID, session=Depends(get_session)) -> None:
+    """Archives the article. Versions, reviews and assignments are kept — the
+    review record is the reason this is a soft delete."""
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
-    await session.delete(article)
-    await session.flush()
+    await repo.soft_delete_article(session, article)
+
+
+@router.post(
+    "/{id_article}/restore",
+    response_model=ArticleOut,
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def restore_article(id_article: uuid.UUID, session=Depends(get_session)) -> ArticleOut:
+    article = await repo.get_article(session, id_article, include_deleted=True)
+    if article is None:
+        raise _not_found()
+    if article.deleted_at is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "article is not archived")
+    await repo.restore_article(session, article)
+    reviewers = await repo.list_reviewer_ids(session, id_article)
+    return repo.to_article_out(article, "admin", reviewers)
 
 
 async def _assign_reviewers(
