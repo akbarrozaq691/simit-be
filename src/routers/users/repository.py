@@ -1,3 +1,4 @@
+import datetime as dt
 import uuid
 
 from sqlalchemy import select
@@ -25,13 +26,21 @@ def _select_with_relations():
     return select(User).options(selectinload(User.role), selectinload(User.occupation))
 
 
-async def list_users(session: AsyncSession) -> list[User]:
-    result = await session.execute(_select_with_relations().order_by(User.created_at.desc()))
+async def list_users(session: AsyncSession, include_deleted: bool = False) -> list[User]:
+    stmt = _select_with_relations().order_by(User.created_at.desc())
+    if not include_deleted:
+        stmt = stmt.where(User.deleted_at.is_(None))
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
-async def get_user(session: AsyncSession, id_user: uuid.UUID) -> User | None:
-    result = await session.execute(_select_with_relations().where(User.id_user == id_user))
+async def get_user(
+    session: AsyncSession, id_user: uuid.UUID, include_deleted: bool = False
+) -> User | None:
+    stmt = _select_with_relations().where(User.id_user == id_user)
+    if not include_deleted:
+        stmt = stmt.where(User.deleted_at.is_(None))
+    result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
 
@@ -76,10 +85,30 @@ async def update_user(session: AsyncSession, id_user: uuid.UUID, updates: dict) 
     return user
 
 
-async def delete_user(session: AsyncSession, id_user: uuid.UUID) -> bool:
-    user = await session.get(User, id_user)
+async def soft_delete_user(session: AsyncSession, id_user: uuid.UUID) -> bool:
+    """Archives instead of deleting. This is also what fixes the previous 500:
+    hard-deleting a user referenced by an article (as author or reviewer) raised
+    a ForeignKeyViolationError."""
+    user = await get_user(session, id_user)
     if user is None:
         return False
-    await session.delete(user)
+    user.deleted_at = dt.datetime.now(dt.timezone.utc)
     await session.flush()
     return True
+
+
+async def restore_user(session: AsyncSession, id_user: uuid.UUID) -> User | None:
+    user = await get_user(session, id_user, include_deleted=True)
+    if user is None or user.deleted_at is None:
+        return None
+    user.deleted_at = None
+    await session.flush()
+    return user
+
+
+async def is_live(session: AsyncSession, id_user: uuid.UUID) -> bool:
+    """Used by get_current_user to revoke archived users' tokens immediately."""
+    result = await session.execute(
+        select(User.id_user).where(User.id_user == id_user, User.deleted_at.is_(None))
+    )
+    return result.scalar_one_or_none() is not None

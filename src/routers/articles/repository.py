@@ -1,3 +1,4 @@
+import datetime as dt
 import uuid
 
 from sqlalchemy import func, select
@@ -18,11 +19,20 @@ def to_article_out(article: Article, viewer_role: str, reviewers: list[uuid.UUID
     return out
 
 
-async def get_article(session: AsyncSession, id_article: uuid.UUID) -> Article | None:
-    return await session.get(Article, id_article)
+async def get_article(
+    session: AsyncSession, id_article: uuid.UUID, include_deleted: bool = False
+) -> Article | None:
+    article = await session.get(Article, id_article)
+    if article is None:
+        return None
+    if article.deleted_at is not None and not include_deleted:
+        return None
+    return article
 
 
-async def list_articles_for(session: AsyncSession, role: str, id_user: str) -> list[Article]:
+async def list_articles_for(
+    session: AsyncSession, role: str, id_user: str, include_deleted: bool = False
+) -> list[Article]:
     stmt = select(Article)
     if role == "author":
         stmt = stmt.where(Article.id_user == uuid.UUID(id_user))
@@ -35,9 +45,21 @@ async def list_articles_for(session: AsyncSession, role: str, id_user: str) -> l
             )
         )
     # EIC/admin see everything
+    if not include_deleted:
+        stmt = stmt.where(Article.deleted_at.is_(None))
     stmt = stmt.order_by(Article.created_at.desc())
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def soft_delete_article(session: AsyncSession, article: Article) -> None:
+    article.deleted_at = dt.datetime.now(dt.timezone.utc)
+    await session.flush()
+
+
+async def restore_article(session: AsyncSession, article: Article) -> None:
+    article.deleted_at = None
+    await session.flush()
 
 
 async def create_article(

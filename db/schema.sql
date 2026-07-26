@@ -53,8 +53,11 @@ CREATE TABLE users (
     email               VARCHAR(150) NOT NULL UNIQUE,
     phone_number        VARCHAR(30),
     password_hash       VARCHAR(200) NOT NULL,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at          TIMESTAMPTZ
 );
+
+CREATE INDEX idx_users_live ON users(id_user) WHERE deleted_at IS NULL;
 
 -- === Recommendation output journals (PIJAR, Jurnal Kimia Riset, Jurnal UPI, ...) ===
 
@@ -95,11 +98,15 @@ CREATE TABLE articles (
     id_recommended_journal   UUID REFERENCES journal(id_journal),
 
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at              TIMESTAMPTZ
 );
 
 CREATE INDEX idx_articles_status ON articles(status);
 CREATE INDEX idx_articles_id_user ON articles(id_user);
+
+-- Partial indexes: the overwhelmingly common query is "live rows only".
+CREATE INDEX idx_articles_live ON articles(id_article) WHERE deleted_at IS NULL;
 
 -- === Article file version history ===
 -- One row per abstract/full-paper file submission (initial + every revision).

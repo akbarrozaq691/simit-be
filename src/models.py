@@ -106,6 +106,7 @@ class User(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
     role: Mapped[Role] = relationship(lazy="joined")
     occupation: Mapped[Occupation | None] = relationship(lazy="joined")
@@ -143,6 +144,7 @@ class Article(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
 
 class ArticleVersion(Base):

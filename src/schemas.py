@@ -107,6 +107,7 @@ class UserOut(ORMModel):
     created_at: dt.datetime
     role: str
     occupation_name: str | None = None
+    deleted_at: dt.datetime | None = None
 
 
 # ---- Reference data: role / occupation / journal ----
@@ -232,6 +233,7 @@ class ArticleOut(ORMModel):
     reviewers: list[uuid.UUID] = []
     created_at: dt.datetime
     updated_at: dt.datetime
+    deleted_at: dt.datetime | None = None
 
 
 class ArticleAssignRequest(BaseModel):
