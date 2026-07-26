@@ -70,16 +70,14 @@ CREATE TABLE journal (
 
 CREATE TYPE article_status AS ENUM (
     'submitted',                    -- peserta submit abstrak
-    'assigned_to_sc',                -- EIC delivery task ke SC (juga: SC review queue)
-    'abstract_decided_accept',       -- internal: SC putuskan lolos, nunggu EIC announce
-    'abstract_decided_reject',       -- internal: SC putuskan tolak, nunggu EIC announce
+    'assigned_to_sc',                -- EIC assign >=1 SC reviewer
+    'abstract_review_complete',      -- internal: semua reviewer selesai, nunggu keputusan EIC
     'abstract_accepted',             -- EIC announce: abstrak diterima, author submit full paper
     'rejected',                      -- pipeline selesai, tidak lolos (terminal)
-    'full_paper_submitted',          -- full paper (baru atau revisi) masuk antrian SC
-    'full_paper_decided_revision',   -- internal: SC minta revisi, nunggu EIC announce
-    'full_paper_decided_accept',     -- internal: SC terima, nunggu EIC announce
+    'full_paper_submitted',          -- full paper (baru atau revisi) masuk antrian reviewer
+    'full_paper_review_complete',    -- internal: semua reviewer selesai, nunggu keputusan EIC
     'revision_needed',               -- EIC announce: author harus resubmit full paper
-    'accepted'                       -- EIC announce: full paper diterima (terminal, ada id_recommended_journal)
+    'accepted'                       -- EIC announce: full paper diterima (terminal)
 );
 
 CREATE TABLE articles (
@@ -93,18 +91,15 @@ CREATE TABLE articles (
     status                  article_status NOT NULL DEFAULT 'submitted',
 
     id_user                 UUID NOT NULL REFERENCES users(id_user),   -- peserta/author
-    id_sc                    UUID REFERENCES users(id_user),            -- SC yang di-assign EIC
     id_topic                 UUID REFERENCES main_topic(id_topic),
     id_recommended_journal   UUID REFERENCES journal(id_journal),
 
-    sc_notes                TEXT,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_articles_status ON articles(status);
 CREATE INDEX idx_articles_id_user ON articles(id_user);
-CREATE INDEX idx_articles_id_sc ON articles(id_sc);
 
 -- === Article file version history ===
 -- One row per abstract/full-paper file submission (initial + every revision).
@@ -123,6 +118,37 @@ CREATE TABLE article_version (
 );
 
 CREATE INDEX idx_article_version_article ON article_version(id_article);
+
+-- === Reviewer assignment (many reviewers per article) ===
+
+CREATE TABLE article_reviewer (
+    id_assignment   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id_article      UUID NOT NULL REFERENCES articles(id_article) ON DELETE CASCADE,
+    id_reviewer     UUID NOT NULL REFERENCES users(id_user),
+    assigned_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id_article, id_reviewer)
+);
+
+CREATE INDEX idx_article_reviewer_article ON article_reviewer(id_article);
+CREATE INDEX idx_article_reviewer_reviewer ON article_reviewer(id_reviewer);
+
+-- === Per-reviewer review decisions ===
+-- Keyed on the file version reviewed, so each revision round is distinct
+-- without a manual round counter. Which decisions are legal is phase-dependent
+-- (abstract: accept/reject, full_paper: accept/revision) and enforced in the
+-- application layer, since the phase lives on article_version.
+
+CREATE TABLE article_review (
+    id_review       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id_version      UUID NOT NULL REFERENCES article_version(id_version) ON DELETE CASCADE,
+    id_reviewer     UUID NOT NULL REFERENCES users(id_user),
+    decision        VARCHAR(20) NOT NULL CHECK (decision IN ('accept', 'reject', 'revision')),
+    notes           TEXT,
+    reviewed_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id_version, id_reviewer)
+);
+
+CREATE INDEX idx_article_review_version ON article_review(id_version);
 
 -- === Timeline (jadwal penting: batas submit abstrak, batas review, pengumuman, dll) ===
 
