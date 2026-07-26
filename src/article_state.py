@@ -1,39 +1,58 @@
-"""Pure status-transition logic for the article review pipeline.
+"""Pure status-transition and policy logic for the article review pipeline.
 
-No DB or HTTP dependencies — router handlers call these functions and then
-persist the returned status. Kept separate so the state machine (the
-highest-risk part of the review pipeline) is unit-testable on its own.
+No DB or HTTP dependencies — routers call these and then persist. Kept
+separate so the riskiest logic (state transitions, conflict-of-interest
+screening) is unit-testable on its own.
+
+Decisions live per-reviewer in `article_review`; an article's status only
+records how far the pipeline has advanced, not what any reviewer decided.
 """
 
 ABSTRACT_REVIEWABLE = {"assigned_to_sc"}
 FULL_PAPER_REVIEWABLE = {"full_paper_submitted"}
 
-_ANNOUNCE_ABSTRACT_ACCEPT = "abstract_decided_accept"
-_ANNOUNCE_ABSTRACT_REJECT = "abstract_decided_reject"
-_ANNOUNCE_FULL_PAPER_REVISION = "full_paper_decided_revision"
-_ANNOUNCE_FULL_PAPER_ACCEPT = "full_paper_decided_accept"
+ABSTRACT_ANNOUNCEABLE = {"abstract_review_complete"}
+FULL_PAPER_ANNOUNCEABLE = {"full_paper_review_complete"}
 
-_ANNOUNCE_MAP = {
-    _ANNOUNCE_ABSTRACT_ACCEPT: "abstract_accepted",
-    _ANNOUNCE_ABSTRACT_REJECT: "rejected",
-    _ANNOUNCE_FULL_PAPER_REVISION: "revision_needed",
-    _ANNOUNCE_FULL_PAPER_ACCEPT: "accepted",
+_REVIEW_COMPLETE_STATUS = {
+    "abstract": "abstract_review_complete",
+    "full_paper": "full_paper_review_complete",
+}
+
+_ANNOUNCED_STATUS = {
+    ("abstract", "accept"): "abstract_accepted",
+    ("abstract", "reject"): "rejected",
+    ("full_paper", "accept"): "accepted",
+    ("full_paper", "revision"): "revision_needed",
 }
 
 
-def decide_abstract_review(accept: bool) -> str:
-    return _ANNOUNCE_ABSTRACT_ACCEPT if accept else _ANNOUNCE_ABSTRACT_REJECT
+def institutions_conflict(a: str | None, b: str | None) -> bool:
+    """True when two institution names indicate a conflict of interest.
+
+    Compared case-insensitively after trimming. A missing or blank value on
+    either side returns False: absence of evidence is not evidence of a
+    conflict, and blocking on it would make incomplete profiles unassignable.
+    Exact-match only — "Univ. Indonesia" will not match "Universitas
+    Indonesia". A deliberate heuristic; the EIC override covers the rest.
+    """
+    if not a or not b:
+        return False
+    left = a.strip().casefold()
+    right = b.strip().casefold()
+    if not left or not right:
+        return False
+    return left == right
 
 
-def decide_full_paper_review(decision: str) -> str:
-    if decision == "accept":
-        return _ANNOUNCE_FULL_PAPER_ACCEPT
-    if decision == "revision":
-        return _ANNOUNCE_FULL_PAPER_REVISION
-    raise ValueError(f"unknown decision: {decision!r}")
+def review_complete_status_for_phase(phase: str) -> str:
+    if phase not in _REVIEW_COMPLETE_STATUS:
+        raise ValueError(f"unknown phase: {phase!r}")
+    return _REVIEW_COMPLETE_STATUS[phase]
 
 
-def announce_result(current_status: str) -> str:
-    if current_status not in _ANNOUNCE_MAP:
-        raise ValueError(f"cannot announce from status: {current_status!r}")
-    return _ANNOUNCE_MAP[current_status]
+def announced_status_for(phase: str, decision: str) -> str:
+    key = (phase, decision)
+    if key not in _ANNOUNCED_STATUS:
+        raise ValueError(f"illegal announce combination: phase={phase!r} decision={decision!r}")
+    return _ANNOUNCED_STATUS[key]
