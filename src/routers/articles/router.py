@@ -1,16 +1,20 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from pydantic import ValidationError
 
-from ... import emailer
+from ... import article_state, emailer, storage
 from ...deps import get_current_user, get_session, require_roles
 from ...schemas import (
+    AbstractReviewRequest,
     ArticleAssignRequest,
     ArticleCreate,
     ArticleFullPaperRequest,
     ArticleOut,
-    ArticleReviewRequest,
     ArticleUpdate,
+    ArticleVersionOut,
+    FullPaperReviewRequest,
+    UploadResponse,
     UserCtx,
 )
 from . import repository as repo
@@ -49,6 +53,14 @@ async def create_article(
         id_topic=body.id_topic,
         id_user=uuid.UUID(user.id_user),
     )
+    await repo.add_article_version(
+        session,
+        id_article=article.id_article,
+        phase="abstract",
+        file_path=body.abstract_file_path,
+        submitted_by=uuid.UUID(user.id_user),
+    )
+    await session.flush()
     return repo.to_article_out(article, "author")
 
 
@@ -150,24 +162,40 @@ async def assign_article(
 )
 async def review_article(
     id_article: uuid.UUID,
-    body: ArticleReviewRequest,
+    body: dict,
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
-    """SC reviews the abstract (or full paper) and sends the decision back to EIC."""
+    """SC reviews the abstract or full paper. Body shape depends on which
+    phase the article is currently in — validated against the matching
+    schema once we know the phase."""
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
     if str(article.id_sc) != user.id_user:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not the assigned reviewer")
-    if article.status not in ("assigned_to_sc", "under_review", "full_paper_submitted"):
+
+    if article.status in article_state.ABSTRACT_REVIEWABLE:
+        try:
+            payload = AbstractReviewRequest(**body)
+        except ValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, exc.errors())
+        article.status = article_state.decide_abstract_review(payload.accept)
+        if payload.notes is not None:
+            article.sc_notes = payload.notes
+    elif article.status in article_state.FULL_PAPER_REVIEWABLE:
+        try:
+            payload = FullPaperReviewRequest(**body)
+        except ValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, exc.errors())
+        article.status = article_state.decide_full_paper_review(payload.decision)
+        if payload.notes is not None:
+            article.sc_notes = payload.notes
+        if payload.id_recommended_journal is not None:
+            article.id_recommended_journal = payload.id_recommended_journal
+    else:
         raise HTTPException(status.HTTP_409_CONFLICT, f"cannot review in status {article.status}")
 
-    article.status = "passed_review" if body.lolos else "revision_needed"
-    if body.notes is not None:
-        article.sc_notes = body.notes
-    if body.id_recommended_journal is not None:
-        article.id_recommended_journal = body.id_recommended_journal
     await session.flush()
     return repo.to_article_out(article, "SC")
 
@@ -182,19 +210,20 @@ async def announce_article(
     background_tasks: BackgroundTasks,
     session=Depends(get_session),
 ) -> ArticleOut:
-    """EIC announces the SC decision back to the author."""
+    """EIC announces the SC's decision (abstract or full paper) to the author."""
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
-    if article.status not in ("passed_review", "revision_needed"):
+
+    try:
+        new_status = article_state.announce_result(article.status)
+    except ValueError:
         raise HTTPException(status.HTTP_409_CONFLICT, f"cannot announce in status {article.status}")
 
-    if article.status == "revision_needed":
-        article.status = "rejected"
-    elif article.full_paper_file_path:
-        article.status = "completed"
-    else:
-        article.status = "announced"
+    if new_status == "accepted" and article.id_recommended_journal is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "id_recommended_journal not set")
+
+    article.status = new_status
     await session.flush()
 
     author_email = await repo.get_user_email(session, article.id_user)
@@ -219,19 +248,26 @@ async def submit_full_paper(
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
-    """Author submits the full paper after being announced as passed."""
+    """Author submits the full paper after being announced as abstract_accepted."""
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
     if str(article.id_user) != user.id_user:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
-    if article.status != "announced":
+    if article.status != "abstract_accepted":
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"cannot submit full paper in status {article.status}"
         )
 
     article.full_paper_file_path = body.full_paper_file_path
     article.status = "full_paper_submitted"
+    await repo.add_article_version(
+        session,
+        id_article=id_article,
+        phase="full_paper",
+        file_path=body.full_paper_file_path,
+        submitted_by=uuid.UUID(user.id_user),
+    )
     await session.flush()
 
     sc_email = await repo.get_user_email(session, article.id_sc)
@@ -242,3 +278,87 @@ async def submit_full_paper(
         f"Article '{article.title}' full paper is ready for your review.",
     )
     return repo.to_article_out(article, "author")
+
+
+@router.post(
+    "/{id_article}/revision",
+    response_model=ArticleOut,
+    dependencies=[Depends(require_roles("author"))],
+)
+async def submit_revision(
+    id_article: uuid.UUID,
+    body: ArticleFullPaperRequest,
+    background_tasks: BackgroundTasks,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> ArticleOut:
+    """Author resubmits the full paper after SC/EIC returned revision_needed."""
+    article = await repo.get_article(session, id_article)
+    if article is None:
+        raise _not_found()
+    if str(article.id_user) != user.id_user:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    if article.status != "revision_needed":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"cannot resubmit revision in status {article.status}"
+        )
+
+    article.full_paper_file_path = body.full_paper_file_path
+    article.status = "full_paper_submitted"
+    await repo.add_article_version(
+        session,
+        id_article=id_article,
+        phase="full_paper",
+        file_path=body.full_paper_file_path,
+        submitted_by=uuid.UUID(user.id_user),
+    )
+    await session.flush()
+
+    sc_email = await repo.get_user_email(session, article.id_sc)
+    background_tasks.add_task(
+        emailer.send,
+        sc_email,
+        "Revised full paper submitted for review",
+        f"Article '{article.title}' revised full paper is ready for your review.",
+    )
+    return repo.to_article_out(article, "author")
+
+
+@router.post("/{id_article}/upload", response_model=UploadResponse)
+async def upload_article_file(
+    id_article: uuid.UUID,
+    file: UploadFile = File(...),
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> UploadResponse:
+    """Uploads a PDF and returns its storage path. Does not mutate the
+    article — the client passes the returned file_path into create/full-paper/
+    revision requests separately, same as the existing string-path fields."""
+    article = await repo.get_article(session, id_article)
+    if article is None:
+        raise _not_found()
+    if str(article.id_user) != user.id_user:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+    if file.content_type != "application/pdf":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "only PDF files are accepted")
+
+    content = await file.read()
+    try:
+        path = await storage.client.upload(file.filename or "upload.pdf", content, file.content_type)
+    except storage.StorageNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
+    return UploadResponse(file_path=path)
+
+
+@router.get("/{id_article}/versions", response_model=list[ArticleVersionOut])
+async def list_article_versions(
+    id_article: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> list[ArticleVersionOut]:
+    article = await repo.get_article(session, id_article)
+    if article is None:
+        raise _not_found()
+    _check_view_permission(article, user)
+    versions = await repo.list_versions(session, id_article)
+    return [ArticleVersionOut.model_validate(v) for v in versions]
