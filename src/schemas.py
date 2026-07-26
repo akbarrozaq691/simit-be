@@ -32,13 +32,11 @@ class RoleName(str, Enum):
 class ArticleStatus(str, Enum):
     submitted = "submitted"
     assigned_to_sc = "assigned_to_sc"
-    abstract_decided_accept = "abstract_decided_accept"
-    abstract_decided_reject = "abstract_decided_reject"
+    abstract_review_complete = "abstract_review_complete"
     abstract_accepted = "abstract_accepted"
     rejected = "rejected"
     full_paper_submitted = "full_paper_submitted"
-    full_paper_decided_revision = "full_paper_decided_revision"
-    full_paper_decided_accept = "full_paper_decided_accept"
+    full_paper_review_complete = "full_paper_review_complete"
     revision_needed = "revision_needed"
     accepted = "accepted"
 
@@ -229,16 +227,45 @@ class ArticleOut(ORMModel):
     full_paper_file_path: str | None
     status: str
     id_user: uuid.UUID
-    id_sc: uuid.UUID | None
     id_topic: uuid.UUID | None
     id_recommended_journal: uuid.UUID | None
-    sc_notes: str | None
+    reviewers: list[uuid.UUID] = []
     created_at: dt.datetime
     updated_at: dt.datetime
 
 
 class ArticleAssignRequest(BaseModel):
     id_sc: uuid.UUID
+    override_coi: bool = False
+
+
+class AssignReviewersRequest(BaseModel):
+    id_reviewers: list[uuid.UUID] = Field(min_length=1)
+    override_coi: bool = False
+
+
+class AbstractAnnounceRequest(BaseModel):
+    decision: Literal["accept", "reject"]
+
+
+class FullPaperAnnounceRequest(BaseModel):
+    decision: Literal["accept", "revision"]
+    id_recommended_journal: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _journal_required_on_accept(self) -> "FullPaperAnnounceRequest":
+        if self.decision == "accept" and self.id_recommended_journal is None:
+            raise ValueError("id_recommended_journal is required when decision is 'accept'")
+        return self
+
+
+class ArticleReviewOut(ORMModel):
+    id_review: uuid.UUID
+    id_version: uuid.UUID
+    id_reviewer: uuid.UUID
+    decision: str
+    notes: str | None
+    reviewed_at: dt.datetime
 
 
 class AbstractReviewRequest(BaseModel):
