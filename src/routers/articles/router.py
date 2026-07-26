@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 
-from ... import article_state, emailer, storage
+from ... import article_state, audit, emailer, storage
 from ...deps import get_current_user, get_session, require_roles
 from ...schemas import (
     AbstractAnnounceRequest,
@@ -93,6 +93,22 @@ async def create_article(
         submitted_by=uuid.UUID(user.id_user),
     )
     await session.flush()
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.created",
+        entity_type="article",
+        entity_id=article.id_article,
+        detail={"title": article.title},
+    )
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.version_submitted",
+        entity_type="article",
+        entity_id=article.id_article,
+        detail={"phase": "abstract"},
+    )
     reviewers = await repo.list_reviewer_ids(session, article.id_article)
     return repo.to_article_out(article, "author", reviewers)
 
@@ -151,13 +167,25 @@ async def update_article(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_roles("admin"))],
 )
-async def delete_article(id_article: uuid.UUID, session=Depends(get_session)) -> None:
+async def delete_article(
+    id_article: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> None:
     """Archives the article. Versions, reviews and assignments are kept — the
     review record is the reason this is a soft delete."""
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
     await repo.soft_delete_article(session, article)
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.deleted",
+        entity_type="article",
+        entity_id=id_article,
+        detail={},
+    )
 
 
 @router.post(
@@ -165,13 +193,25 @@ async def delete_article(id_article: uuid.UUID, session=Depends(get_session)) ->
     response_model=ArticleOut,
     dependencies=[Depends(require_roles("admin"))],
 )
-async def restore_article(id_article: uuid.UUID, session=Depends(get_session)) -> ArticleOut:
+async def restore_article(
+    id_article: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> ArticleOut:
     article = await repo.get_article(session, id_article, include_deleted=True)
     if article is None:
         raise _not_found()
     if article.deleted_at is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "article is not archived")
     await repo.restore_article(session, article)
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.restored",
+        entity_type="article",
+        entity_id=id_article,
+        detail={},
+    )
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "admin", reviewers)
 
@@ -182,6 +222,7 @@ async def _assign_reviewers(
     id_reviewers: list[uuid.UUID],
     override_coi: bool,
     background_tasks: BackgroundTasks,
+    id_actor: uuid.UUID,
 ) -> None:
     """Validates and assigns reviewers, emailing each newly assigned one.
 
@@ -215,6 +256,14 @@ async def _assign_reviewers(
     await session.flush()
 
     for id_reviewer in newly_assigned:
+        await audit.record(
+            session,
+            id_actor=id_actor,
+            action="reviewer.assigned",
+            entity_type="article",
+            entity_id=article.id_article,
+            detail={"id_reviewer": str(id_reviewer), "coi_overridden": override_coi},
+        )
         email = await repo.get_user_email(session, id_reviewer)
         background_tasks.add_task(
             emailer.send,
@@ -233,6 +282,7 @@ async def assign_article(
     id_article: uuid.UUID,
     body: ArticleAssignRequest,
     background_tasks: BackgroundTasks,
+    user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
     """Single-reviewer shortcut, kept for backward compatibility.
@@ -243,7 +293,14 @@ async def assign_article(
     if article.status != "submitted":
         raise HTTPException(status.HTTP_409_CONFLICT, f"cannot assign in status {article.status}")
 
-    await _assign_reviewers(session, article, [body.id_sc], body.override_coi, background_tasks)
+    await _assign_reviewers(
+        session,
+        article,
+        [body.id_sc],
+        body.override_coi,
+        background_tasks,
+        uuid.UUID(user.id_user),
+    )
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "EIC", reviewers)
 
@@ -312,10 +369,32 @@ async def review_article(
         decision=decision,
         notes=body.notes,
     )
+    await audit.record(
+        session,
+        id_actor=id_reviewer,
+        action="review.submitted",
+        entity_type="article",
+        entity_id=id_article,
+        detail={
+            "id_reviewer": str(id_reviewer),
+            "id_version": str(version.id_version),
+            "decision": decision,
+        },
+    )
 
+    previous_status = article.status
     if await repo.all_assigned_have_reviewed(session, id_article, version.id_version):
         article.status = article_state.review_complete_status_for_phase(phase)
     await session.flush()
+    if article.status != previous_status:
+        await audit.record(
+            session,
+            id_actor=id_reviewer,
+            action="article.status_changed",
+            entity_type="article",
+            entity_id=id_article,
+            detail={"from": previous_status, "to": article.status},
+        )
 
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "SC", reviewers)
@@ -330,6 +409,7 @@ async def announce_article(
     id_article: uuid.UUID,
     body: AbstractAnnounceRequest | FullPaperAnnounceRequest,
     background_tasks: BackgroundTasks,
+    user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
     """EIC weighs the reviews and announces the outcome to the author.
@@ -368,8 +448,17 @@ async def announce_article(
             status.HTTP_409_CONFLICT, f"cannot announce in status {article.status}"
         )
 
+    previous_status = article.status
     article.status = article_state.announced_status_for(phase, decision)
     await session.flush()
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.status_changed",
+        entity_type="article",
+        entity_id=id_article,
+        detail={"from": previous_status, "to": article.status},
+    )
 
     author_email = await repo.get_user_email(session, article.id_user)
     background_tasks.add_task(
@@ -405,6 +494,7 @@ async def submit_full_paper(
             status.HTTP_409_CONFLICT, f"cannot submit full paper in status {article.status}"
         )
 
+    previous_status = article.status
     article.full_paper_file_path = body.full_paper_file_path
     article.status = "full_paper_submitted"
     await repo.add_article_version(
@@ -415,6 +505,22 @@ async def submit_full_paper(
         submitted_by=uuid.UUID(user.id_user),
     )
     await session.flush()
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.status_changed",
+        entity_type="article",
+        entity_id=id_article,
+        detail={"from": previous_status, "to": article.status},
+    )
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.version_submitted",
+        entity_type="article",
+        entity_id=id_article,
+        detail={"phase": "full_paper"},
+    )
 
     reviewers = await repo.list_reviewer_ids(session, id_article)
     for id_reviewer in reviewers:
@@ -451,6 +557,7 @@ async def submit_revision(
             status.HTTP_409_CONFLICT, f"cannot resubmit revision in status {article.status}"
         )
 
+    previous_status = article.status
     article.full_paper_file_path = body.full_paper_file_path
     article.status = "full_paper_submitted"
     await repo.add_article_version(
@@ -461,6 +568,22 @@ async def submit_revision(
         submitted_by=uuid.UUID(user.id_user),
     )
     await session.flush()
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.status_changed",
+        entity_type="article",
+        entity_id=id_article,
+        detail={"from": previous_status, "to": article.status},
+    )
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.version_submitted",
+        entity_type="article",
+        entity_id=id_article,
+        detail={"phase": "full_paper"},
+    )
 
     reviewers = await repo.list_reviewer_ids(session, id_article)
     for id_reviewer in reviewers:
@@ -530,6 +653,7 @@ async def assign_reviewers(
     id_article: uuid.UUID,
     body: AssignReviewersRequest,
     background_tasks: BackgroundTasks,
+    user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
     """EIC assigns one or more SC reviewers. Additive: call again to add more.
@@ -543,7 +667,12 @@ async def assign_reviewers(
         )
 
     await _assign_reviewers(
-        session, article, body.id_reviewers, body.override_coi, background_tasks
+        session,
+        article,
+        body.id_reviewers,
+        body.override_coi,
+        background_tasks,
+        uuid.UUID(user.id_user),
     )
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "EIC", reviewers)
@@ -557,6 +686,7 @@ async def assign_reviewers(
 async def unassign_reviewer(
     id_article: uuid.UUID,
     id_reviewer: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
     """Unassigns a reviewer — the escape hatch for an unresponsive reviewer
@@ -572,6 +702,7 @@ async def unassign_reviewer(
     if not await repo.remove_reviewer(session, id_article, id_reviewer):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "reviewer not assigned to this article")
 
+    previous_status = article.status
     phase = _current_review_phase(article.status)
     if phase is not None:
         version = await repo.latest_version(session, id_article, phase)
@@ -580,6 +711,23 @@ async def unassign_reviewer(
         ):
             article.status = article_state.review_complete_status_for_phase(phase)
     await session.flush()
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="reviewer.unassigned",
+        entity_type="article",
+        entity_id=id_article,
+        detail={"id_reviewer": str(id_reviewer)},
+    )
+    if article.status != previous_status:
+        await audit.record(
+            session,
+            id_actor=uuid.UUID(user.id_user),
+            action="article.status_changed",
+            entity_type="article",
+            entity_id=id_article,
+            detail={"from": previous_status, "to": article.status},
+        )
 
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "EIC", reviewers)

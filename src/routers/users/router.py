@@ -2,6 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ... import audit
 from ...deps import get_current_user, get_session, require_roles
 from ...schemas import UserCreate, UserCtx, UserOut, UserUpdate
 from ...security import hash_password
@@ -28,7 +29,11 @@ async def list_users(include_deleted: bool = False, session=Depends(get_session)
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_roles("admin"))],
 )
-async def create_user(body: UserCreate, session=Depends(get_session)) -> UserOut:
+async def create_user(
+    body: UserCreate,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> UserOut:
     role = await reference_repo.get_role_by_name(session, body.name_role.value)
     if role is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown name_role")
@@ -36,7 +41,7 @@ async def create_user(body: UserCreate, session=Depends(get_session)) -> UserOut
         raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
 
     id_occupation = await reference_repo.get_or_create_occupation(session, body.occupation_name)
-    user = await repo.create_user(
+    created = await repo.create_user(
         session,
         user_name=body.user_name,
         institution_name=body.institution_name,
@@ -46,7 +51,15 @@ async def create_user(body: UserCreate, session=Depends(get_session)) -> UserOut
         phone_number=body.phone_number,
         password_hash=hash_password(body.password),
     )
-    return repo.to_user_out(user)
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="user.created",
+        entity_type="user",
+        entity_id=created.id_user,
+        detail={"role": body.name_role.value},
+    )
+    return repo.to_user_out(created)
 
 
 @router.get("/{id_user}", response_model=UserOut)
@@ -87,12 +100,24 @@ async def update_user(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_roles("admin"))],
 )
-async def delete_user(id_user: uuid.UUID, session=Depends(get_session)) -> None:
+async def delete_user(
+    id_user: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> None:
     """Archives the user. Previously a hard delete, which raised a raw
     ForeignKeyViolationError (500) for any user referenced by an article as
     author or reviewer."""
     if not await repo.soft_delete_user(session, id_user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="user.deleted",
+        entity_type="user",
+        entity_id=id_user,
+        detail={},
+    )
 
 
 @router.post(
@@ -100,10 +125,22 @@ async def delete_user(id_user: uuid.UUID, session=Depends(get_session)) -> None:
     response_model=UserOut,
     dependencies=[Depends(require_roles("admin"))],
 )
-async def restore_user(id_user: uuid.UUID, session=Depends(get_session)) -> UserOut:
-    user = await repo.restore_user(session, id_user)
-    if user is None:
+async def restore_user(
+    id_user: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> UserOut:
+    restored = await repo.restore_user(session, id_user)
+    if restored is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "user not found or not archived"
         )
-    return repo.to_user_out(user)
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="user.restored",
+        entity_type="user",
+        entity_id=id_user,
+        detail={},
+    )
+    return repo.to_user_out(restored)
