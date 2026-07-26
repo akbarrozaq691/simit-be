@@ -278,12 +278,6 @@ class FullPaperReviewRequest(BaseModel):
     notes: str | None = None
     id_recommended_journal: uuid.UUID | None = None
 
-    @model_validator(mode="after")
-    def _journal_required_on_accept(self) -> "FullPaperReviewRequest":
-        if self.decision == "accept" and self.id_recommended_journal is None:
-            raise ValueError("id_recommended_journal is required when decision is 'accept'")
-        return self
-
 
 class ArticleVersionOut(ORMModel):
     id_version: uuid.UUID
