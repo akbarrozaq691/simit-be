@@ -1,7 +1,6 @@
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
-from pydantic import ValidationError
 
 from ... import article_state, emailer, storage
 from ...deps import get_current_user, get_session, require_roles
@@ -169,13 +168,13 @@ async def assign_article(
 )
 async def review_article(
     id_article: uuid.UUID,
-    body: dict,
+    body: AbstractReviewRequest | FullPaperReviewRequest,
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
-    """SC reviews the abstract or full paper. Body shape depends on which
-    phase the article is currently in — validated against the matching
-    schema once we know the phase."""
+    """SC reviews the abstract or the full paper. The body shape selects which:
+    `{"accept": bool}` for an abstract, `{"decision": "accept"|"revision"}` for
+    a full paper. The shape must match the phase the article is actually in."""
     article = await repo.get_article(session, id_article)
     if article is None:
         raise _not_found()
@@ -183,29 +182,27 @@ async def review_article(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not the assigned reviewer")
 
     if article.status in article_state.ABSTRACT_REVIEWABLE:
-        try:
-            payload = AbstractReviewRequest(**body)
-        except ValidationError as exc:
+        if not isinstance(body, AbstractReviewRequest):
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                exc.errors(include_context=False, include_url=False),
+                status.HTTP_409_CONFLICT,
+                f"article is in abstract review (status {article.status}); "
+                'expected an abstract review body: {"accept": bool}',
             )
-        article.status = article_state.decide_abstract_review(payload.accept)
-        if payload.notes is not None:
-            article.sc_notes = payload.notes
+        article.status = article_state.decide_abstract_review(body.accept)
+        if body.notes is not None:
+            article.sc_notes = body.notes
     elif article.status in article_state.FULL_PAPER_REVIEWABLE:
-        try:
-            payload = FullPaperReviewRequest(**body)
-        except ValidationError as exc:
+        if not isinstance(body, FullPaperReviewRequest):
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                exc.errors(include_context=False, include_url=False),
+                status.HTTP_409_CONFLICT,
+                f"article is in full-paper review (status {article.status}); "
+                'expected a full-paper review body: {"decision": "accept"|"revision"}',
             )
-        article.status = article_state.decide_full_paper_review(payload.decision)
-        if payload.notes is not None:
-            article.sc_notes = payload.notes
-        if payload.id_recommended_journal is not None:
-            article.id_recommended_journal = payload.id_recommended_journal
+        article.status = article_state.decide_full_paper_review(body.decision)
+        if body.notes is not None:
+            article.sc_notes = body.notes
+        if body.id_recommended_journal is not None:
+            article.id_recommended_journal = body.id_recommended_journal
     else:
         raise HTTPException(status.HTTP_409_CONFLICT, f"cannot review in status {article.status}")
 
