@@ -295,3 +295,15 @@ class UploadResponse(BaseModel):
 
 class ArticleFullPaperRequest(BaseModel):
     full_paper_file_path: str
+
+
+# ---- Audit log ----
+
+class AuditLogOut(ORMModel):
+    id_audit: uuid.UUID
+    id_actor: uuid.UUID | None
+    action: str
+    entity_type: str
+    entity_id: uuid.UUID | None
+    detail: dict | None
+    created_at: dt.datetime
