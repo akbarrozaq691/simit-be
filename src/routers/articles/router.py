@@ -179,7 +179,10 @@ async def review_article(
         try:
             payload = AbstractReviewRequest(**body)
         except ValidationError as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, exc.errors())
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                exc.errors(include_context=False, include_url=False),
+            )
         article.status = article_state.decide_abstract_review(payload.accept)
         if payload.notes is not None:
             article.sc_notes = payload.notes
@@ -187,7 +190,10 @@ async def review_article(
         try:
             payload = FullPaperReviewRequest(**body)
         except ValidationError as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, exc.errors())
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                exc.errors(include_context=False, include_url=False),
+            )
         article.status = article_state.decide_full_paper_review(payload.decision)
         if payload.notes is not None:
             article.sc_notes = payload.notes
