@@ -8,3 +8,4 @@ venv/
 .claude-flow/
 .superpowers/
 .pytest_cache/
+db/backups/
