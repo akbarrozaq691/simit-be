@@ -37,3 +37,9 @@ def test_unknown_action_is_rejected():
 
 def test_entity_types_are_constrained():
     assert audit.ENTITY_TYPES == {"article", "user"}
+
+
+def test_download_action_is_part_of_the_vocabulary():
+    """Recorded but unfilterable is the failure this guards: the action was
+    added to the writer without reaching the log's filter list."""
+    assert audit.is_known_action("article.file_downloaded")

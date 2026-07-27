@@ -2,11 +2,29 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 
+from ... import audit
 from ...deps import get_session, require_roles
 from ...schemas import AuditLogOut
 from . import repository as repo
 
 router = APIRouter(prefix="/audit-log", tags=["audit"])
+
+
+# Declared before the list route's siblings so the literal path wins the match.
+@router.get(
+    "/actions",
+    response_model=list[str],
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def list_actions() -> list[str]:
+    """The action vocabulary the log can be filtered by.
+
+    Served rather than duplicated in the client: the filter list was previously
+    a hand-maintained copy of `audit.ACTIONS`, and it went stale the first time
+    an action was added — the new one was recorded but could not be filtered
+    for.
+    """
+    return sorted(audit.ACTIONS)
 
 
 @router.get("", response_model=list[AuditLogOut], dependencies=[Depends(require_roles("admin"))])
