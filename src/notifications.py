@@ -119,7 +119,46 @@ def reviewer_full_paper_ready(title: str, *, revised: bool) -> tuple[str, str]:
     )
 
 
+def reviewer_review_received(title: str, phase: str) -> tuple[str, str]:
+    """Sent to the reviewer who just submitted, as an acknowledgement.
+
+    Submitting a review into silence leaves a reviewer unsure whether it
+    registered at all — and unpaid volunteers deserve the thank-you.
+    """
+    stage = "abstract" if phase == "abstract" else "full paper"
+    return (
+        "Thank you for your review",
+        f'Your {stage} review of "{title}" has been recorded. Thank you for the time '
+        "you gave it.\n\n"
+        "The editors will announce the outcome once every assigned reviewer has "
+        "submitted. No further action is needed from you.",
+    )
+
+
 # ---- to editors ----
+
+
+def editor_submission_received(title: str, phase: str, *, revised: bool = False) -> tuple[str, str]:
+    """Sent when something arrives that an editor will have to act on.
+
+    Assignment is a manual step, so a submission nobody is told about sits
+    untouched until an editor happens to open the dashboard.
+    """
+    if revised:
+        return (
+            "A revised full paper has been submitted",
+            f'The author of "{title}" has submitted a revised full paper. It has gone back to the '
+            "assigned reviewers.",
+        )
+    if phase == "abstract":
+        return (
+            "New abstract submitted",
+            f'"{title}" has been submitted and is waiting to be assigned to reviewers.',
+        )
+    return (
+        "New full paper submitted",
+        f'The full paper for "{title}" has been submitted and is with the assigned reviewers.',
+    )
 
 
 def editor_reviews_complete(title: str, phase: str) -> tuple[str, str]:

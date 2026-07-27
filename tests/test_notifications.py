@@ -98,3 +98,51 @@ def test_editor_notice_names_the_stage_in_words(phase, expected):
     assert expected in subject
     assert "full_paper" not in subject and "full_paper" not in body
     assert TITLE in body
+
+
+# ---- the acknowledgement and editor notices ----
+
+
+@pytest.mark.parametrize("phase,expected", [("abstract", "abstract"), ("full_paper", "full paper")])
+def test_reviewer_is_thanked_and_told_what_happens_next(phase, expected):
+    subject, body = notifications.reviewer_review_received(TITLE, phase)
+    assert "thank" in subject.lower()
+    assert expected in body
+    assert TITLE in body
+    # No slug spelling reaches a reviewer either.
+    assert "full_paper" not in body
+    # And it should say no further action is needed, so nobody waits on a step
+    # that does not exist.
+    assert "no further action" in body.lower()
+
+
+@pytest.mark.parametrize(
+    "phase,revised,must_contain",
+    [
+        ("abstract", False, "abstract"),
+        ("full_paper", False, "full paper"),
+        ("full_paper", True, "revised"),
+    ],
+)
+def test_editor_notice_says_what_arrived(phase, revised, must_contain):
+    subject, body = notifications.editor_submission_received(TITLE, phase, revised=revised)
+    assert must_contain in subject.lower()
+    assert TITLE in body
+    assert "full_paper" not in subject and "full_paper" not in body
+
+
+def test_a_new_abstract_tells_the_editor_it_needs_assigning():
+    """That is the action the notice exists to prompt."""
+    _, body = notifications.editor_submission_received(TITLE, "abstract")
+    assert "assign" in body.lower()
+
+
+def test_editor_notices_are_distinguishable_from_each_other():
+    subjects = {
+        notifications.editor_submission_received(TITLE, "abstract")[0],
+        notifications.editor_submission_received(TITLE, "full_paper")[0],
+        notifications.editor_submission_received(TITLE, "full_paper", revised=True)[0],
+        notifications.editor_reviews_complete(TITLE, "abstract")[0],
+        notifications.editor_reviews_complete(TITLE, "full_paper")[0],
+    }
+    assert len(subjects) == 5

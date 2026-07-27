@@ -136,6 +136,12 @@ async def create_article(
     subject, body_text = notifications.author_abstract_received(article.title)
     background_tasks.add_task(emailer.send, author_email, subject, body_text)
 
+    # Assignment is a manual step, so an unannounced submission sits untouched
+    # until an editor happens to open the dashboard.
+    subject, body_text = notifications.editor_submission_received(article.title, "abstract")
+    for email in await users_repo.list_emails_by_role(session, "EIC"):
+        background_tasks.add_task(emailer.send, email, subject, body_text)
+
     reviewers = await repo.list_reviewer_ids(session, article.id_article)
     return repo.to_article_out(article, "author", reviewers)
 
@@ -432,6 +438,12 @@ async def review_article(
         for email in await users_repo.list_emails_by_role(session, "EIC"):
             background_tasks.add_task(emailer.send, email, subject, body_text)
 
+    # Acknowledge the reviewer who just submitted, whether or not theirs was the
+    # last one: a review submitted into silence leaves them unsure it registered.
+    reviewer_email = await repo.get_user_email(session, uuid.UUID(user.id_user))
+    subject, body_text = notifications.reviewer_review_received(article.title, phase)
+    background_tasks.add_task(emailer.send, reviewer_email, subject, body_text)
+
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "SC", reviewers)
 
@@ -558,6 +570,10 @@ async def submit_full_paper(
     subject, body = notifications.author_full_paper_received(article.title)
     background_tasks.add_task(emailer.send, author_email, subject, body)
 
+    subject, body = notifications.editor_submission_received(article.title, "full_paper")
+    for email in await users_repo.list_emails_by_role(session, "EIC"):
+        background_tasks.add_task(emailer.send, email, subject, body)
+
     reviewers = await repo.list_reviewer_ids(session, id_article)
     subject, body = notifications.reviewer_full_paper_ready(article.title, revised=False)
     for id_reviewer in reviewers:
@@ -620,6 +636,12 @@ async def submit_revision(
     author_email = await repo.get_user_email(session, article.id_user)
     subject, body = notifications.author_revision_received(article.title)
     background_tasks.add_task(emailer.send, author_email, subject, body)
+
+    subject, body = notifications.editor_submission_received(
+        article.title, "full_paper", revised=True
+    )
+    for email in await users_repo.list_emails_by_role(session, "EIC"):
+        background_tasks.add_task(emailer.send, email, subject, body)
 
     reviewers = await repo.list_reviewer_ids(session, id_article)
     subject, body = notifications.reviewer_full_paper_ready(article.title, revised=True)
