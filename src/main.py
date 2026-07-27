@@ -8,6 +8,8 @@ from .deps import get_session
 from .routers.articles.router import router as articles_router
 from .routers.audit.router import router as audit_router
 from .routers.auth.router import router as auth_router
+from .routers.content.router import admin_router as content_admin_router
+from .routers.content.router import public_router as landing_router
 from .routers.reference.router import journal_router, occupation_router, role_router
 from .routers.timeline.router import router as timeline_router
 from .routers.topics.router import router as topics_router
@@ -35,6 +37,8 @@ app.include_router(topics_router, prefix=p)
 app.include_router(articles_router, prefix=p)
 app.include_router(uploads_router, prefix=p)
 app.include_router(audit_router, prefix=p)
+app.include_router(landing_router, prefix=p)
+app.include_router(content_admin_router, prefix=p)
 
 
 @app.get("/health", tags=["health"])

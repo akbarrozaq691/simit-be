@@ -73,6 +73,8 @@ class MainTopic(Base):
 
     id_topic: Mapped[uuid.UUID] = _uuid_pk()
     topic_name: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column(server_default=text("0"))
 
 
 class SubTopicStem(Base):
@@ -244,3 +246,54 @@ class Timeline(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
+
+
+# ---- Landing page content (admin-editable) ----
+
+
+class SiteContent(Base):
+    """Key/value store for the landing page's single-value text.
+
+    A table per section would mean a migration every time the organisers want
+    another line of copy; a key/value row means adding one seed value. The keys
+    are a known set (see db/schema.sql's seed), and the admin UI renders a
+    labelled field per key rather than exposing raw keys.
+    """
+
+    __tablename__ = "site_content"
+
+    content_key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    content_value: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()")
+    )
+
+
+class ScheduleItem(Base):
+    __tablename__ = "schedule_item"
+
+    id_schedule: Mapped[uuid.UUID] = _uuid_pk()
+    title: Mapped[str] = mapped_column(String(150), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    # Free text, not a date: organisers write ranges and notes here
+    # ("15 - 30 Juli 2026", "TBA").
+    date_text: Mapped[str | None] = mapped_column(String(100))
+    sort_order: Mapped[int] = mapped_column(server_default=text("0"))
+
+
+class FaqItem(Base):
+    __tablename__ = "faq_item"
+
+    id_faq: Mapped[uuid.UUID] = _uuid_pk()
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(server_default=text("0"))
+
+
+class GalleryImage(Base):
+    __tablename__ = "gallery_image"
+
+    id_image: Mapped[uuid.UUID] = _uuid_pk()
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    caption: Mapped[str | None] = mapped_column(String(200))
+    sort_order: Mapped[int] = mapped_column(server_default=text("0"))

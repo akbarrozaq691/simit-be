@@ -32,7 +32,7 @@ async def list_topics(session=Depends(get_session)) -> list[TopicWithSubtopics]:
     dependencies=[Depends(require_roles("admin"))],
 )
 async def create_topic(body: TopicCreate, session=Depends(get_session)) -> TopicOut:
-    return await repo.create_topic(session, body.topic_name)
+    return await repo.create_topic(session, body.topic_name, body.description, body.sort_order)
 
 
 @router.put(
@@ -41,7 +41,7 @@ async def create_topic(body: TopicCreate, session=Depends(get_session)) -> Topic
 async def update_topic(
     id_topic: uuid.UUID, body: TopicCreate, session=Depends(get_session)
 ) -> TopicOut:
-    topic = await repo.update_topic(session, id_topic, body.topic_name)
+    topic = await repo.update_topic(session, id_topic, body.topic_name, body.description, body.sort_order)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "topic not found")
     return topic

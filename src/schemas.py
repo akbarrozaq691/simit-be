@@ -266,11 +266,15 @@ class TimelineOut(ORMModel):
 
 class TopicCreate(BaseModel):
     topic_name: str
+    description: str | None = None
+    sort_order: int = 0
 
 
 class TopicOut(ORMModel):
     id_topic: uuid.UUID
     topic_name: str
+    description: str | None = None
+    sort_order: int = 0
 
 
 class SubTopicCreate(BaseModel):
@@ -401,3 +405,79 @@ class AuditLogOut(ORMModel):
     entity_id: uuid.UUID | None
     detail: dict | None
     created_at: dt.datetime
+
+
+# ---- Landing page content (CMS) ----
+
+
+class SiteContentOut(ORMModel):
+    content_key: str
+    content_value: str
+
+
+class SiteContentUpdate(BaseModel):
+    """A batch of key/value edits.
+
+    Batched on purpose: the admin screen is one form covering a whole section,
+    so saving it should be one request and one transaction rather than a PATCH
+    per field that can half-apply.
+    """
+
+    values: dict[str, str] = Field(min_length=1)
+
+
+class ScheduleItemCreate(BaseModel):
+    title: str
+    description: str | None = None
+    date_text: str | None = None
+    sort_order: int = 0
+
+
+class ScheduleItemOut(ORMModel):
+    id_schedule: uuid.UUID
+    title: str
+    description: str | None
+    date_text: str | None
+    sort_order: int
+
+
+class FaqItemCreate(BaseModel):
+    question: str
+    answer: str
+    sort_order: int = 0
+
+
+class FaqItemOut(ORMModel):
+    id_faq: uuid.UUID
+    question: str
+    answer: str
+    sort_order: int
+
+
+class GalleryImageCreate(BaseModel):
+    file_path: str
+    caption: str | None = None
+    sort_order: int = 0
+
+
+class GalleryImageOut(ORMModel):
+    id_image: uuid.UUID
+    file_path: str
+    caption: str | None
+    sort_order: int
+
+
+class LandingContentOut(BaseModel):
+    """Everything the public landing page needs, in one request.
+
+    The page renders seven sections; fetching them separately would mean seven
+    round trips before anything is visible, and a partial failure would leave
+    the page half-built.
+    """
+
+    content: dict[str, str]
+    schedule: list[ScheduleItemOut]
+    faq: list[FaqItemOut]
+    gallery: list[GalleryImageOut]
+    topics: list[TopicOut]
+    journals: list[JournalOut]

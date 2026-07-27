@@ -35,18 +35,31 @@ async def list_sub_topics(session: AsyncSession, kind: str, id_topic: uuid.UUID)
     return list(result.scalars().all())
 
 
-async def create_topic(session: AsyncSession, topic_name: str) -> MainTopic:
-    topic = MainTopic(topic_name=topic_name)
+async def create_topic(
+    session: AsyncSession,
+    topic_name: str,
+    description: str | None = None,
+    sort_order: int = 0,
+) -> MainTopic:
+    topic = MainTopic(topic_name=topic_name, description=description, sort_order=sort_order)
     session.add(topic)
     await session.flush()
     return topic
 
 
-async def update_topic(session: AsyncSession, id_topic: uuid.UUID, topic_name: str) -> MainTopic | None:
+async def update_topic(
+    session: AsyncSession,
+    id_topic: uuid.UUID,
+    topic_name: str,
+    description: str | None = None,
+    sort_order: int = 0,
+) -> MainTopic | None:
     topic = await session.get(MainTopic, id_topic)
     if topic is None:
         return None
     topic.topic_name = topic_name
+    topic.description = description
+    topic.sort_order = sort_order
     await session.flush()
     return topic
 
