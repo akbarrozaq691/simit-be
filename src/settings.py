@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "noreply@simit.local"
+    # Display name shown to recipients. Kept apart from smtp_from because that
+    # value is also the envelope sender, which must be a bare address — mail
+    # servers verify it and refuse anything they cannot match to the account.
+    smtp_from_name: str = ""
 
     # ---- Storage (S3-compatible: AWS S3, MinIO, Cloudflare R2, ...) ----
     # All empty by default — placeholders until real credentials exist.
