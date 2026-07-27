@@ -36,10 +36,12 @@ async def _read_within_limit(file: UploadFile) -> bytes:
     return content
 
 
-async def _store(file: UploadFile, content: bytes, fallback_name: str) -> str:
+async def _store(
+    file: UploadFile, content: bytes, fallback_name: str, *, public: bool = False
+) -> str:
     try:
         return await storage.client.upload(
-            file.filename or fallback_name, content, file.content_type
+            file.filename or fallback_name, content, file.content_type, public=public
         )
     except storage.StorageNotConfiguredError as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
@@ -71,4 +73,6 @@ async def store_image(file: UploadFile) -> str:
         )
 
     content = await _read_within_limit(file)
-    return await _store(file, content, "upload.png")
+    # Public: the landing page loads these with a plain <img src> from a browser
+    # carrying no credentials. Papers, stored by store_pdf above, stay private.
+    return await _store(file, content, "upload.png", public=True)

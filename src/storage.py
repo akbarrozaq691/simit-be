@@ -28,7 +28,17 @@ class StorageClient:
             region_name=settings.storage_region,
         )
 
-    async def upload(self, filename: str, content: bytes, content_type: str) -> str:
+    async def upload(
+        self, filename: str, content: bytes, content_type: str, *, public: bool = False
+    ) -> str:
+        """Stores a file and returns the URL it is addressed by.
+
+        `public` decides whether anonymous readers can fetch it, and the default
+        is no. Papers must stay unreadable to anyone without a session — blind
+        review is worth nothing if the PDF is a guessable URL away — while
+        landing-page images are loaded by `<img src>` from a browser that has no
+        credentials, so those have to be public to render at all.
+        """
         if not settings.storage_base_url or not settings.storage_bucket:
             raise StorageNotConfiguredError(
                 "storage is not configured — set storage_base_url and storage_bucket"
@@ -38,11 +48,13 @@ class StorageClient:
 
         def _put() -> None:
             s3 = self._make_s3_client()
+            extra = {"ACL": "public-read"} if public else {}
             s3.put_object(
                 Bucket=settings.storage_bucket,
                 Key=key,
                 Body=content,
                 ContentType=content_type,
+                **extra,
             )
 
         await asyncio.to_thread(_put)
