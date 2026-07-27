@@ -7,7 +7,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-simit}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     ports:
-      - "5432:5432"
+      # Loopback only: the app reaches Postgres over the compose network, so
+      # publishing this at all is a convenience for local psql clients. On
+      # 0.0.0.0 it is the database itself exposed to the network.
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT_HOST:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
@@ -26,7 +29,12 @@ services:
     environment:
       POSTGRES_HOST: postgres
     ports:
-      - "${APP_PORT:-8888}:8888"
+      # Bound to loopback by default: with nginx on the host, the only thing that
+      # needs to reach the app is the proxy on the same machine, and publishing
+      # on 0.0.0.0 puts the whole API — including /docs — straight on the
+      # network. Set APP_BIND=0.0.0.0 to reach it from elsewhere, which the
+      # containerised frontend in ../fe needs.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8888}:8888"
     depends_on:
       postgres:
         condition: service_healthy
