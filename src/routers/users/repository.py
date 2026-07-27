@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...models import User
+from ...models import Role, User
 from ...schemas import UserOut
 
 
@@ -31,6 +31,18 @@ async def list_users(session: AsyncSession, include_deleted: bool = False) -> li
     stmt = _select_with_relations().order_by(User.created_at.desc())
     if not include_deleted:
         stmt = stmt.where(User.deleted_at.is_(None))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_reviewers(session: AsyncSession) -> list[User]:
+    """Active SC users, for the reviewer-assignment screen."""
+    stmt = (
+        _select_with_relations()
+        .join(User.role)
+        .where(Role.name_role == "SC", User.deleted_at.is_(None))
+        .order_by(User.user_name)
+    )
     result = await session.execute(stmt)
     return list(result.scalars().all())
 

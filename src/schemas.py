@@ -202,6 +202,18 @@ class UserOut(ORMModel):
     deleted_at: dt.datetime | None = None
 
 
+class ReviewerOption(BaseModel):
+    """A reviewer, as the assignment screen needs to show them.
+
+    Name and id only. That screen previously read the full user list, which an
+    editor is not entitled to: it carries every author's email, phone number and
+    institution, none of which is needed to pick a reviewer.
+    """
+
+    id_user: uuid.UUID
+    user_name: str
+
+
 # ---- Reference data: role / occupation / journal ----
 
 class RoleCreate(BaseModel):

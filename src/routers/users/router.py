@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ... import audit
 from ...deps import get_current_user, get_session, require_roles
-from ...schemas import UserCreate, UserCtx, UserOut, UserUpdate
+from ...schemas import ReviewerOption, UserCreate, UserCtx, UserOut, UserUpdate
 from ...security import hash_password
 from ..reference import repository as reference_repo
 from . import repository as repo
@@ -21,6 +21,25 @@ def _ensure_self_or_admin(user: UserCtx, id_user: uuid.UUID) -> None:
 async def list_users(include_deleted: bool = False, session=Depends(get_session)) -> list[UserOut]:
     users = await repo.list_users(session, include_deleted=include_deleted)
     return [repo.to_user_out(u) for u in users]
+
+
+# Declared before /{id_user} so the literal path wins the match.
+@router.get(
+    "/reviewers",
+    response_model=list[ReviewerOption],
+    dependencies=[Depends(require_roles("admin", "EIC"))],
+)
+async def list_reviewers(session=Depends(get_session)) -> list[ReviewerOption]:
+    """The reviewers an editor can assign.
+
+    Separate from GET /users, which is admin-only: assigning a reviewer is an
+    EIC job, but the full user list carries every author's contact details. This
+    returns names and ids, which is all the assignment screen uses.
+    """
+    return [
+        ReviewerOption(id_user=u.id_user, user_name=u.user_name)
+        for u in await repo.list_reviewers(session)
+    ]
 
 
 @router.post(
