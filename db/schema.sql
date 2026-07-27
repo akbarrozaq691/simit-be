@@ -44,12 +44,20 @@ CREATE TABLE sub_topic_interdisciplinary (
 
 -- === Users ===
 
+-- register_as: how a participant signed up.
+--   'student'           -> occupation must be one of the three curated student
+--                          levels (fixed ids in the seed below)
+--   'general_presenter' -> occupation is typed freely and stored as its own
+--                          occupation row
+CREATE TYPE register_as_kind AS ENUM ('student', 'general_presenter');
+
 CREATE TABLE users (
     id_user             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_name           VARCHAR(150) NOT NULL,
     institution_name    VARCHAR(200),
     id_occupation       UUID REFERENCES occupation(id_occupation),
     id_role             UUID NOT NULL REFERENCES role(id_role),
+    register_as         register_as_kind,
     email               VARCHAR(150) NOT NULL UNIQUE,
     phone_number        VARCHAR(30),
     password_hash       VARCHAR(200) NOT NULL,
@@ -194,6 +202,16 @@ CREATE INDEX idx_timeline_start_date ON timeline(start_date);
 -- === Seed data ===
 
 INSERT INTO role (name_role) VALUES ('admin'), ('EIC'), ('SC'), ('author');
+
+-- Curated student levels. The ids are FIXED rather than generated: the
+-- registration form offers exactly these three when someone registers as a
+-- student, so both the frontend and migration 004 can refer to them directly
+-- and get the same rows in every environment. Freely-typed occupations
+-- (general presenters) get ordinary random ids.
+INSERT INTO occupation (id_occupation, occupation_name) VALUES
+    ('11111111-1111-4111-8111-111111111111', 'Bachelor Student'),
+    ('22222222-2222-4222-8222-222222222222', 'Master Student'),
+    ('33333333-3333-4333-8333-333333333333', 'Doctoral Student');
 
 -- default admin account, password: Admin@123 (bcrypt hash below) -- CHANGE IN PRODUCTION
 INSERT INTO users (user_name, institution_name, id_role, email, phone_number, password_hash)

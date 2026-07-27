@@ -19,6 +19,7 @@ def to_user_out(user: User) -> UserOut:
         created_at=user.created_at,
         role=user.role.name_role,
         occupation_name=user.occupation.occupation_name if user.occupation else None,
+        register_as=user.register_as,
     )
 
 
@@ -59,12 +60,14 @@ async def create_user(
     email: str,
     phone_number: str | None,
     password_hash: str,
+    register_as: str | None = None,
 ) -> User:
     user = User(
         user_name=user_name,
         institution_name=institution_name,
         id_occupation=id_occupation,
         id_role=id_role,
+        register_as=register_as,
         email=email,
         phone_number=phone_number,
         password_hash=password_hash,

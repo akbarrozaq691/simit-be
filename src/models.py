@@ -30,6 +30,24 @@ ArticleStatusEnum = PGEnum(
 )
 
 
+RegisterAsEnum = PGEnum(
+    "student",
+    "general_presenter",
+    name="register_as_kind",
+    create_type=False,  # already created by db/schema.sql
+)
+
+# Fixed ids for the three curated student levels, seeded in db/schema.sql.
+# Referring to them by constant keeps the registration flow's "student" branch
+# from depending on a name lookup that an admin could rename out from under it.
+BACHELOR_STUDENT_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
+MASTER_STUDENT_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
+DOCTORAL_STUDENT_ID = uuid.UUID("33333333-3333-4333-8333-333333333333")
+STUDENT_OCCUPATION_IDS = frozenset(
+    {BACHELOR_STUDENT_ID, MASTER_STUDENT_ID, DOCTORAL_STUDENT_ID}
+)
+
+
 def _uuid_pk() -> Mapped[uuid.UUID]:
     return mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
@@ -100,6 +118,7 @@ class User(Base):
         ForeignKey("occupation.id_occupation")
     )
     id_role: Mapped[uuid.UUID] = mapped_column(ForeignKey("role.id_role"), nullable=False)
+    register_as: Mapped[str | None] = mapped_column(RegisterAsEnum)
     email: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
     phone_number: Mapped[str | None] = mapped_column(String(30))
     password_hash: Mapped[str] = mapped_column(String(200), nullable=False)

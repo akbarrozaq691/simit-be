@@ -6,7 +6,9 @@ import uuid
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+
+from .normalize import is_valid_phone, normalize_email, normalize_phone, title_case
 
 # Plain "user@domain.tld" shape check — deliberately not pydantic.EmailStr,
 # which rejects RFC 6761 special-use domains like `.local` that dev/seed
@@ -48,15 +50,81 @@ class UserCtx(BaseModel):
     role: str
 
 
+class RegisterAs(str, Enum):
+    student = "student"
+    general_presenter = "general_presenter"
+
+
+class NormalisedContact(BaseModel):
+    """Applies the shared input rules so every entry point stores the same shape.
+
+    Participants type inconsistently; normalising at the schema boundary means
+    self-registration and admin-created accounts cannot drift apart.
+    """
+
+    @field_validator("user_name", "institution_name", mode="after", check_fields=False)
+    @classmethod
+    def _title_case_text(cls, value: str | None) -> str | None:
+        return title_case(value)
+
+    @field_validator("email", mode="after", check_fields=False)
+    @classmethod
+    def _lower_email(cls, value: str) -> str:
+        return normalize_email(value)
+
+    @field_validator("phone_number", mode="after", check_fields=False)
+    @classmethod
+    def _clean_phone(cls, value: str | None) -> str | None:
+        cleaned = normalize_phone(value)
+        if not is_valid_phone(cleaned):
+            raise ValueError(
+                "phone_number must include the country code in international format, "
+                "e.g. +905551234567"
+            )
+        return cleaned
+
+
 # ---- Auth ----
 
-class RegisterRequest(BaseModel):
+class RegisterRequest(NormalisedContact):
     user_name: str
     email: EmailStr
     password: str = Field(min_length=6)
-    occupation_name: str
+    register_as: RegisterAs
     institution_name: str | None = None
     phone_number: str | None = None
+    # Students pick one of the three curated levels by id; general presenters
+    # type their own occupation. Exactly one of these is required, enforced
+    # below — which one depends on register_as.
+    id_occupation: uuid.UUID | None = None
+    occupation_name: str | None = None
+
+    @model_validator(mode="after")
+    def _occupation_matches_registration_kind(self) -> "RegisterRequest":
+        if self.register_as == RegisterAs.student:
+            if self.id_occupation is None:
+                raise ValueError("id_occupation is required when registering as a student")
+            if self.occupation_name is not None:
+                raise ValueError(
+                    "occupation_name is not accepted when registering as a student; "
+                    "choose a student level with id_occupation"
+                )
+        else:
+            if not (self.occupation_name or "").strip():
+                raise ValueError(
+                    "occupation_name is required when registering as a general presenter"
+                )
+            if self.id_occupation is not None:
+                raise ValueError(
+                    "id_occupation is not accepted when registering as a general presenter; "
+                    "type the occupation in occupation_name"
+                )
+        return self
+
+    @field_validator("occupation_name", mode="after")
+    @classmethod
+    def _title_case_occupation(cls, value: str | None) -> str | None:
+        return title_case(value)
 
 
 class AuthUserOut(ORMModel):
@@ -81,7 +149,7 @@ class TokenOut(ORMModel):
 
 # ---- Users ----
 
-class UserCreate(BaseModel):
+class UserCreate(NormalisedContact):
     user_name: str
     email: EmailStr
     password: str = Field(min_length=6)
@@ -91,7 +159,7 @@ class UserCreate(BaseModel):
     occupation_name: str | None = None
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(NormalisedContact):
     user_name: str | None = None
     institution_name: str | None = None
     phone_number: str | None = None
@@ -107,6 +175,7 @@ class UserOut(ORMModel):
     created_at: dt.datetime
     role: str
     occupation_name: str | None = None
+    register_as: str | None = None
     deleted_at: dt.datetime | None = None
 
 

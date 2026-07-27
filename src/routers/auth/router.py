@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from ...deps import get_session
-from ...models import User
-from ...schemas import AuthUserOut, LoginRequest, RegisterRequest, TokenOut
+from ...models import STUDENT_OCCUPATION_IDS, User
+from ...schemas import AuthUserOut, LoginRequest, RegisterAs, RegisterRequest, TokenOut
 from ...security import create_token, hash_password, verify_password
 from ..reference import repository as reference_repo
 from ..users import repository as users_repo
@@ -20,12 +20,23 @@ async def register(body: RegisterRequest, session=Depends(get_session)) -> AuthU
 
     author_role = await reference_repo.get_role_by_name(session, "author")
 
-    id_occupation = None
-    if body.occupation_name:
-        occupation = await reference_repo.get_occupation_by_name(session, body.occupation_name)
-        if occupation is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown occupation_name")
-        id_occupation = occupation.id_occupation
+    if body.register_as == RegisterAs.student:
+        # Students may only pick one of the three curated levels. Restricting to
+        # the fixed ids means this path cannot be used to introduce arbitrary
+        # occupation rows — the free-text branch below is the only one that can,
+        # and it is scoped to what the participant typed about themselves.
+        if body.id_occupation not in STUDENT_OCCUPATION_IDS:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "id_occupation must be one of the student levels offered at registration",
+            )
+        id_occupation = body.id_occupation
+    else:
+        # General presenters describe their own occupation, so it is created on
+        # demand rather than chosen from the admin-curated list.
+        id_occupation = await reference_repo.get_or_create_occupation(
+            session, body.occupation_name
+        )
 
     user = await users_repo.create_user(
         session,
@@ -33,6 +44,7 @@ async def register(body: RegisterRequest, session=Depends(get_session)) -> AuthU
         institution_name=body.institution_name,
         id_occupation=id_occupation,
         id_role=author_role.id_role,
+        register_as=body.register_as.value,
         email=body.email,
         phone_number=body.phone_number,
         password_hash=hash_password(body.password),
