@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 
-from ... import article_state, audit, emailer, storage, uploads
+from ... import article_state, audit, emailer, notifications, storage, uploads
 from ...deps import get_current_user, get_session, require_roles
 from ...schemas import (
     AbstractAnnounceRequest,
@@ -21,6 +21,7 @@ from ...schemas import (
     UploadResponse,
     UserCtx,
 )
+from ..users import repository as users_repo
 from . import repository as repo
 
 router = APIRouter(prefix="/articles", tags=["articles"])
@@ -71,7 +72,10 @@ async def list_articles(
     dependencies=[Depends(require_roles("author"))],
 )
 async def create_article(
-    body: ArticleCreate, user: UserCtx = Depends(get_current_user), session=Depends(get_session)
+    body: ArticleCreate,
+    background_tasks: BackgroundTasks,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
 ) -> ArticleOut:
     article = await repo.create_article(
         session,
@@ -107,6 +111,13 @@ async def create_article(
         entity_id=article.id_article,
         detail={"phase": "abstract"},
     )
+    # A receipt for the author. Submitting into silence is the most common
+    # complaint about systems like this, and it is also how a failed upload goes
+    # unnoticed.
+    author_email = await repo.get_user_email(session, article.id_user)
+    subject, body_text = notifications.author_abstract_received(article.title)
+    background_tasks.add_task(emailer.send, author_email, subject, body_text)
+
     reviewers = await repo.list_reviewer_ids(session, article.id_article)
     return repo.to_article_out(article, "author", reviewers)
 
@@ -263,12 +274,15 @@ async def _assign_reviewers(
             detail={"id_reviewer": str(id_reviewer), "coi_overridden": override_coi},
         )
         email = await repo.get_user_email(session, id_reviewer)
-        background_tasks.add_task(
-            emailer.send,
-            email,
-            "New article assigned for review",
-            f"Article '{article.title}' has been assigned to you for review.",
-        )
+        subject, body = notifications.reviewer_assigned(article.title)
+        background_tasks.add_task(emailer.send, email, subject, body)
+
+    if newly_assigned:
+        # The author is told their submission has entered review. Without this
+        # they see nothing between submitting and the decision.
+        author_email = await repo.get_user_email(session, article.id_user)
+        subject, body = notifications.author_status_change(article.title, article.status)
+        background_tasks.add_task(emailer.send, author_email, subject, body)
 
 
 @router.post(
@@ -311,6 +325,7 @@ async def assign_article(
 async def review_article(
     id_article: uuid.UUID,
     body: AbstractReviewRequest | FullPaperReviewRequest,
+    background_tasks: BackgroundTasks,
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
@@ -393,6 +408,11 @@ async def review_article(
             entity_id=id_article,
             detail={"from": previous_status, "to": article.status},
         )
+        # The phase just closed, so tell whoever announces decisions. Otherwise
+        # an editor has to keep reopening the dashboard to notice.
+        subject, body_text = notifications.editor_reviews_complete(article.title, phase)
+        for email in await users_repo.list_emails_by_role(session, "EIC"):
+            background_tasks.add_task(emailer.send, email, subject, body_text)
 
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "SC", reviewers)
@@ -459,12 +479,8 @@ async def announce_article(
     )
 
     author_email = await repo.get_user_email(session, article.id_user)
-    background_tasks.add_task(
-        emailer.send,
-        author_email,
-        f"Update on your article '{article.title}'",
-        f"Your article status is now: {article.status}.",
-    )
+    subject, body = notifications.author_status_change(article.title, article.status)
+    background_tasks.add_task(emailer.send, author_email, subject, body)
     reviewers = await repo.list_reviewer_ids(session, id_article)
     return repo.to_article_out(article, "EIC", reviewers)
 
@@ -520,15 +536,15 @@ async def submit_full_paper(
         detail={"phase": "full_paper"},
     )
 
+    author_email = await repo.get_user_email(session, article.id_user)
+    subject, body = notifications.author_full_paper_received(article.title)
+    background_tasks.add_task(emailer.send, author_email, subject, body)
+
     reviewers = await repo.list_reviewer_ids(session, id_article)
+    subject, body = notifications.reviewer_full_paper_ready(article.title, revised=False)
     for id_reviewer in reviewers:
         reviewer_email = await repo.get_user_email(session, id_reviewer)
-        background_tasks.add_task(
-            emailer.send,
-            reviewer_email,
-            "Full paper submitted for review",
-            f"Article '{article.title}' full paper is ready for your review.",
-        )
+        background_tasks.add_task(emailer.send, reviewer_email, subject, body)
     return repo.to_article_out(article, "author", reviewers)
 
 
@@ -583,15 +599,15 @@ async def submit_revision(
         detail={"phase": "full_paper"},
     )
 
+    author_email = await repo.get_user_email(session, article.id_user)
+    subject, body = notifications.author_revision_received(article.title)
+    background_tasks.add_task(emailer.send, author_email, subject, body)
+
     reviewers = await repo.list_reviewer_ids(session, id_article)
+    subject, body = notifications.reviewer_full_paper_ready(article.title, revised=True)
     for id_reviewer in reviewers:
         reviewer_email = await repo.get_user_email(session, id_reviewer)
-        background_tasks.add_task(
-            emailer.send,
-            reviewer_email,
-            "Revised full paper submitted for review",
-            f"Article '{article.title}' revised full paper is ready for your review.",
-        )
+        background_tasks.add_task(emailer.send, reviewer_email, subject, body)
     return repo.to_article_out(article, "author", reviewers)
 
 

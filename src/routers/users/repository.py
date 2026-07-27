@@ -35,6 +35,18 @@ async def list_users(session: AsyncSession, include_deleted: bool = False) -> li
     return list(result.scalars().all())
 
 
+async def list_emails_by_role(session: AsyncSession, name_role: str) -> list[str]:
+    """Addresses of active users holding a role, for notifications with no single
+    recipient — "all reviews are in" goes to whoever is editing, not one person."""
+    stmt = (
+        select(User.email)
+        .join(User.role)
+        .where(Role.name_role == name_role, User.deleted_at.is_(None))
+    )
+    result = await session.execute(stmt)
+    return [e for e in result.scalars().all() if e]
+
+
 async def list_reviewers(session: AsyncSession) -> list[User]:
     """Active SC users, for the reviewer-assignment screen."""
     stmt = (
