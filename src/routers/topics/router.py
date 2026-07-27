@@ -35,7 +35,13 @@ async def create_topic(body: TopicCreate, session=Depends(get_session)) -> Topic
     return await repo.create_topic(session, body.topic_name, body.description, body.sort_order)
 
 
+# Both verbs: the body is a full replacement (every field required), so PUT is
+# the honest one, but PATCH is accepted too for consistency with the other
+# editable resources and with what clients already send.
 @router.put(
+    "/topics/{id_topic}", response_model=TopicOut, dependencies=[Depends(require_roles("admin"))]
+)
+@router.patch(
     "/topics/{id_topic}", response_model=TopicOut, dependencies=[Depends(require_roles("admin"))]
 )
 async def update_topic(

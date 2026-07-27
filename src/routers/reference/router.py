@@ -59,6 +59,11 @@ async def create_occupation(body: OccupationCreate, session=Depends(get_session)
     response_model=OccupationOut,
     dependencies=[Depends(require_roles("admin"))],
 )
+@occupation_router.patch(
+    "/{id_occupation}",
+    response_model=OccupationOut,
+    dependencies=[Depends(require_roles("admin"))],
+)
 async def update_occupation(
     id_occupation: uuid.UUID, body: OccupationCreate, session=Depends(get_session)
 ) -> OccupationOut:
@@ -98,6 +103,11 @@ async def create_journal(body: JournalCreate, session=Depends(get_session)) -> J
 
 
 @journal_router.put(
+    "/{id_journal}",
+    response_model=JournalOut,
+    dependencies=[Depends(require_roles("admin", "EIC"))],
+)
+@journal_router.patch(
     "/{id_journal}",
     response_model=JournalOut,
     dependencies=[Depends(require_roles("admin", "EIC"))],
