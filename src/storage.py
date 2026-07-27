@@ -10,6 +10,7 @@ import asyncio
 import uuid
 
 import boto3
+from botocore.client import Config
 
 from .settings import settings
 
@@ -47,6 +48,13 @@ class StorageClient:
             aws_access_key_id=settings.storage_access_key,
             aws_secret_access_key=settings.storage_secret_key,
             region_name=settings.storage_region,
+            # Pinned explicitly: against a custom endpoint botocore signs real
+            # requests with SigV4 but falls back to the deprecated SigV2 when
+            # presigning, so download links were signed with HMAC-SHA1. Neither
+            # scheme puts the secret in the URL — only the access key id, which
+            # is an identifier — but there is no reason to keep using the weaker
+            # one.
+            config=Config(signature_version="s3v4"),
         )
 
     async def upload(

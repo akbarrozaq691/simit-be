@@ -26,13 +26,14 @@ async def test_upload_calls_boto3_put_object_and_returns_url(monkeypatch):
         client = storage.StorageClient()
         result = await client.upload("paper.pdf", b"%PDF-1.4...", "application/pdf")
 
-    mock_boto_client.assert_called_once_with(
-        "s3",
-        endpoint_url="https://storage.example.com",
-        aws_access_key_id="key",
-        aws_secret_access_key="secret",
-        region_name="auto",
-    )
+    # Called with the credentials AND an explicit SigV4 config: botocore
+    # otherwise presigns with the deprecated SigV2 against a custom endpoint.
+    kwargs = mock_boto_client.call_args.kwargs
+    assert kwargs["endpoint_url"] == "https://storage.example.com"
+    assert kwargs["aws_access_key_id"] == "key"
+    assert kwargs["aws_secret_access_key"] == "secret"
+    assert kwargs["region_name"] == "auto"
+    assert kwargs["config"].signature_version == "s3v4"
     mock_s3.put_object.assert_called_once()
     call_kwargs = mock_s3.put_object.call_args.kwargs
     assert call_kwargs["Bucket"] == "papers"
