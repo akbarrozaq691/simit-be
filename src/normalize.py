@@ -69,6 +69,22 @@ def _capitalise_fragment(fragment: str, *, is_first: bool) -> str:
     return lowered.capitalize()
 
 
+def collapse_whitespace(value: str | None) -> str | None:
+    """Trims and collapses runs of whitespace, leaving capitalisation alone.
+
+    Used for institution and freely-typed occupation. People know how their own
+    organisation and job title are written — "LIPI", "ITB", "PhD candidate" —
+    and title-casing those does more damage than the inconsistency it fixes.
+    Whitespace cleanup is safe because it never loses information.
+
+    Returns None for None and for a value that is only whitespace.
+    """
+    if value is None:
+        return None
+    collapsed = " ".join(value.split())
+    return collapsed or None
+
+
 def title_case(value: str | None) -> str | None:
     """Title-cases a name or institution, collapsing runs of whitespace.
 

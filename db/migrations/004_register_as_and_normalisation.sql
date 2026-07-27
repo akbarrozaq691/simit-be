@@ -6,21 +6,22 @@
 --      EIC, SC, and authors created before this) were never asked.
 --   2. The three curated student occupations, with FIXED ids so the frontend
 --      and every environment agree on them.
---   3. A one-off tidy of existing rows: title-case names and institutions,
---      lowercase emails.
+--   3. A one-off tidy of existing rows: title-case names, lowercase emails,
+--      and collapse stray whitespace. Institutions keep their capitalisation.
 --
 -- Fresh databases do not need this — db/schema.sql already has all of it.
 --
--- Note on (3): this is deliberately CONSERVATIVE. Postgres `initcap` would
--- destroy acronyms — 'SIMIT' becomes 'Simit', 'UPI' becomes 'Upi' — and the
--- existing rows contain exactly those. So it only rewrites values that are
--- unambiguously sloppy input:
---   * entirely lowercase (someone never pressed shift), or
---   * carrying leading/trailing/doubled whitespace
--- Anything with deliberate capitalisation is left alone. Every future write
--- goes through `src/normalize.py`, which knows about particles ("bin",
--- "van der") and acronyms; reimplementing those word lists in SQL would mean
--- maintaining them twice and letting them drift.
+-- Note on (3): institution_name is NOT re-cased, only de-whitespaced.
+-- Participants know how their own organisation is written — 'LIPI', 'ITB',
+-- 'Universitas Gadjah Mada' — and `initcap` would flatten exactly those
+-- ('SIMIT' -> 'Simit', 'UPI' -> 'Upi'). The application does the same: see
+-- `collapse_whitespace` in src/normalize.py.
+--
+-- user_name IS title-cased, but only when the value is entirely lowercase,
+-- i.e. unambiguously sloppy input. Anything with deliberate capitalisation is
+-- left alone. Future writes go through `src/normalize.py`, which also knows
+-- about particles ('bin', 'van der') and acronyms; reimplementing those word
+-- lists in SQL would mean maintaining them twice and letting them drift.
 
 BEGIN;
 
@@ -52,18 +53,12 @@ SET institution_name = regexp_replace(btrim(institution_name), '\s+', ' ', 'g')
 WHERE institution_name IS NOT NULL
   AND institution_name <> regexp_replace(btrim(institution_name), '\s+', ' ', 'g');
 
--- Title-case ONLY values that are entirely lowercase, so acronyms like 'SIMIT'
--- and 'UPI' survive untouched.
+-- Title-case ONLY names that are entirely lowercase — unambiguously sloppy
+-- input. Institutions are deliberately excluded (see the note above).
 UPDATE users
 SET user_name = initcap(user_name)
 WHERE user_name = lower(user_name)
   AND user_name ~ '[a-z]';
-
-UPDATE users
-SET institution_name = initcap(institution_name)
-WHERE institution_name IS NOT NULL
-  AND institution_name = lower(institution_name)
-  AND institution_name ~ '[a-z]';
 
 -- Blank-but-not-null institutions are absence of data, not data.
 UPDATE users SET institution_name = NULL WHERE btrim(coalesce(institution_name, '')) = '';

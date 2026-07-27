@@ -1,6 +1,12 @@
 import pytest
 
-from src.normalize import is_valid_phone, normalize_email, normalize_phone, title_case
+from src.normalize import (
+    collapse_whitespace,
+    is_valid_phone,
+    normalize_email,
+    normalize_phone,
+    title_case,
+)
 
 
 class TestTitleCase:
@@ -11,14 +17,13 @@ class TestTitleCase:
             ("BUDI SANTOSO", "Budi Santoso"),
             ("bUdI sAnToSo", "BUdI SAnToSo"),  # internal capitals are preserved
             ("  budi   santoso  ", "Budi Santoso"),
-            ("universitas indonesia", "Universitas Indonesia"),
         ],
     )
     def test_basic_casing(self, raw, expected):
         assert title_case(raw) == expected
 
     def test_collapses_internal_whitespace(self):
-        assert title_case("universitas     gadjah    mada") == "Universitas Gadjah Mada"
+        assert title_case("budi     santoso    junior") == "Budi Santoso Junior"
 
     @pytest.mark.parametrize(
         "raw,expected",
@@ -26,7 +31,6 @@ class TestTitleCase:
             ("muhammad bin abdullah", "Muhammad bin Abdullah"),
             ("siti binti hasan", "Siti binti Hasan"),
             ("jan van der berg", "Jan van der Berg"),
-            ("institut of technology", "Institut of Technology"),
         ],
     )
     def test_particles_stay_lowercase_unless_leading(self, raw, expected):
@@ -39,8 +43,7 @@ class TestTitleCase:
         "raw,expected",
         [
             ("ppi turkiye", "PPI Turkiye"),
-            ("universitas upi", "Universitas UPI"),
-            ("itb bandung", "ITB Bandung"),
+            ("muhammad phd", "Muhammad PHD"),
         ],
     )
     def test_known_acronyms_stay_uppercase(self, raw, expected):
@@ -50,7 +53,6 @@ class TestTitleCase:
         "raw,expected",
         [
             ("sri-mulyani indrawati", "Sri-Mulyani Indrawati"),
-            ("fakultas teknik/informatika", "Fakultas Teknik/Informatika"),
         ],
     )
     def test_hyphens_and_slashes_capitalise_each_part(self, raw, expected):
@@ -63,6 +65,45 @@ class TestTitleCase:
     def test_blank_becomes_none(self, blank):
         """A whitespace-only value is absence of data, not data."""
         assert title_case(blank) is None
+
+
+class TestCollapseWhitespace:
+    """Institution and freely-typed occupation keep their capitalisation.
+
+    Participants know how their own organisation and job title are written, so
+    only whitespace is tidied — the one change that cannot lose information.
+    """
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("LIPI", "LIPI"),
+            ("ITB", "ITB"),
+            ("Universitas Gadjah Mada", "Universitas Gadjah Mada"),
+            ("universitas gadjah mada", "universitas gadjah mada"),
+            ("PhD Candidate", "PhD Candidate"),
+            ("R&D Engineer", "R&D Engineer"),
+        ],
+    )
+    def test_capitalisation_is_left_alone(self, raw, expected):
+        assert collapse_whitespace(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("  LIPI  ", "LIPI"),
+            ("Institut    Teknologi   Bandung", "Institut Teknologi Bandung"),
+        ],
+    )
+    def test_whitespace_is_tidied(self, raw, expected):
+        assert collapse_whitespace(raw) == expected
+
+    def test_none_passes_through(self):
+        assert collapse_whitespace(None) is None
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+    def test_blank_becomes_none(self, blank):
+        assert collapse_whitespace(blank) is None
 
 
 class TestNormalizeEmail:

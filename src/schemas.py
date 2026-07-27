@@ -8,7 +8,13 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
-from .normalize import is_valid_phone, normalize_email, normalize_phone, title_case
+from .normalize import (
+    collapse_whitespace,
+    is_valid_phone,
+    normalize_email,
+    normalize_phone,
+    title_case,
+)
 
 # Plain "user@domain.tld" shape check — deliberately not pydantic.EmailStr,
 # which rejects RFC 6761 special-use domains like `.local` that dev/seed
@@ -62,10 +68,17 @@ class NormalisedContact(BaseModel):
     self-registration and admin-created accounts cannot drift apart.
     """
 
-    @field_validator("user_name", "institution_name", mode="after", check_fields=False)
+    @field_validator("user_name", mode="after", check_fields=False)
     @classmethod
-    def _title_case_text(cls, value: str | None) -> str | None:
+    def _title_case_name(cls, value: str | None) -> str | None:
         return title_case(value)
+
+    @field_validator("institution_name", mode="after", check_fields=False)
+    @classmethod
+    def _tidy_institution(cls, value: str | None) -> str | None:
+        # Capitalisation left as typed: participants know whether theirs is
+        # "LIPI", "ITB" or "Universitas Gadjah Mada".
+        return collapse_whitespace(value)
 
     @field_validator("email", mode="after", check_fields=False)
     @classmethod
@@ -123,8 +136,10 @@ class RegisterRequest(NormalisedContact):
 
     @field_validator("occupation_name", mode="after")
     @classmethod
-    def _title_case_occupation(cls, value: str | None) -> str | None:
-        return title_case(value)
+    def _tidy_occupation(cls, value: str | None) -> str | None:
+        # Same reasoning as institution — "PhD Candidate", "R&D Engineer" are
+        # the participant's own wording, not ours to restyle.
+        return collapse_whitespace(value)
 
 
 class AuthUserOut(ORMModel):
