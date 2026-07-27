@@ -134,7 +134,15 @@ class AuthUserOut(ORMModel):
     role: str
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(NormalisedContact):
+    """Inherits email normalisation deliberately.
+
+    Addresses are stored lowercased, so the lookup must lowercase too —
+    otherwise signing in with different capitalisation than you registered
+    with fails with "invalid email or password", which is both wrong and
+    impossible for the user to diagnose.
+    """
+
     email: EmailStr
     password: str
 
