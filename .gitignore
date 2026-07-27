@@ -16,3 +16,6 @@ agentdb.rvf.idmap.json
 
 # playwright verification artefacts
 .playwright-mcp/
+
+# Local test fixture, not part of the build
+tes.pdf
