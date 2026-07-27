@@ -86,6 +86,7 @@ class SubTopicStem(Base):
     id_topic: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("main_topic.id_topic", ondelete="CASCADE"), nullable=False
     )
+    sort_order: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
 
 
 class SubTopicHumanity(Base):
@@ -97,6 +98,7 @@ class SubTopicHumanity(Base):
     id_topic: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("main_topic.id_topic", ondelete="CASCADE"), nullable=False
     )
+    sort_order: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
 
 
 class SubTopicInterdisciplinary(Base):
@@ -108,6 +110,7 @@ class SubTopicInterdisciplinary(Base):
     id_topic: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("main_topic.id_topic", ondelete="CASCADE"), nullable=False
     )
+    sort_order: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
 
 
 class User(Base):
@@ -155,6 +158,9 @@ class Article(Base):
 
     id_user: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id_user"), nullable=False)
     id_topic: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("main_topic.id_topic"))
+    # The sub-theme the author chose, as text — see migration 007 for why
+    # this is not a foreign key.
+    sub_topic: Mapped[str | None] = mapped_column(String(150))
     id_recommended_journal: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("journal.id_journal")
     )

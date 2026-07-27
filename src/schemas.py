@@ -315,6 +315,8 @@ class ArticleCreate(BaseModel):
     keywords: str | None = None
     abstract_file_path: str
     id_topic: uuid.UUID | None = None
+    # Validated against the chosen topic's sub-themes at submission.
+    sub_topic: str | None = None
 
 
 class ArticleUpdate(BaseModel):
@@ -337,6 +339,7 @@ class ArticleOut(ORMModel):
     status: str
     id_user: uuid.UUID
     id_topic: uuid.UUID | None
+    sub_topic: str | None = None
     id_recommended_journal: uuid.UUID | None
     reviewers: list[uuid.UUID] = []
     created_at: dt.datetime
@@ -493,6 +496,17 @@ class GalleryImageOut(ORMModel):
     sort_order: int
 
 
+class LandingTopicOut(TopicOut):
+    """A topic as the landing page shows it.
+
+    Sub-themes are flattened to plain names: the three separate tables behind
+    them are an editorial distinction, and a visitor reading the Sub Theme
+    section only needs the list.
+    """
+
+    sub_topics: list[str] = []
+
+
 class LandingContentOut(BaseModel):
     """Everything the public landing page needs, in one request.
 
@@ -505,5 +519,5 @@ class LandingContentOut(BaseModel):
     schedule: list[ScheduleItemOut]
     faq: list[FaqItemOut]
     gallery: list[GalleryImageOut]
-    topics: list[TopicOut]
+    topics: list[LandingTopicOut]
     journals: list[JournalOut]

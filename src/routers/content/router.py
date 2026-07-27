@@ -10,6 +10,7 @@ from ...schemas import (
     GalleryImageOut,
     JournalOut,
     LandingContentOut,
+    LandingTopicOut,
     ScheduleItemCreate,
     ScheduleItemOut,
     SiteContentUpdate,
@@ -37,12 +38,19 @@ async def get_landing(session=Depends(get_session)) -> LandingContentOut:
     calls would mean seven round trips before anything appears, and one failing
     section would leave the page half-built.
     """
+    sub_topics = await repo.sub_topics_by_topic(session)
     return LandingContentOut(
         content=await repo.all_content(session),
         schedule=[ScheduleItemOut.model_validate(i) for i in await repo.list_schedule(session)],
         faq=[FaqItemOut.model_validate(i) for i in await repo.list_faq(session)],
         gallery=[GalleryImageOut.model_validate(i) for i in await repo.list_gallery(session)],
-        topics=[TopicOut.model_validate(t) for t in await repo.list_topics_ordered(session)],
+        topics=[
+            LandingTopicOut(
+                **TopicOut.model_validate(t).model_dump(),
+                sub_topics=sub_topics.get(t.id_topic, []),
+            )
+            for t in await repo.list_topics_ordered(session)
+        ],
         journals=[JournalOut.model_validate(j) for j in await repo.list_journals(session)],
     )
 

@@ -6,7 +6,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...models import Article, ArticleReview, ArticleReviewer, ArticleVersion, User
+from ...models import (
+    Article,
+    ArticleReview,
+    ArticleReviewer,
+    ArticleVersion,
+    SubTopicHumanity,
+    SubTopicInterdisciplinary,
+    SubTopicStem,
+    User,
+)
 from ...schemas import ArticleOut
 from ...status import AUTHOR_STATUS_MAP
 
@@ -71,6 +80,7 @@ async def create_article(
     keywords: str | None,
     abstract_file_path: str,
     id_topic: uuid.UUID | None,
+    sub_topic: str | None,
     id_user: uuid.UUID,
 ) -> Article:
     article = Article(
@@ -80,6 +90,7 @@ async def create_article(
         keywords=keywords,
         abstract_file_path=abstract_file_path,
         id_topic=id_topic,
+        sub_topic=sub_topic,
         id_user=id_user,
     )
     session.add(article)
@@ -159,6 +170,21 @@ async def list_versions(session: AsyncSession, id_article: uuid.UUID) -> list[Ar
         .order_by(ArticleVersion.phase, ArticleVersion.version_number)
     )
     return list(result.scalars().all())
+
+
+async def sub_topic_names(session: AsyncSession, id_topic: uuid.UUID) -> list[str]:
+    """Every sub-theme belonging to one topic, across the three tables."""
+    names: list[str] = []
+    for model, column in (
+        (SubTopicStem, SubTopicStem.stem_topic),
+        (SubTopicHumanity, SubTopicHumanity.humanity_topic),
+        (SubTopicInterdisciplinary, SubTopicInterdisciplinary.interdisciplinary_topic),
+    ):
+        result = await session.execute(
+            select(column).where(model.id_topic == id_topic).order_by(model.sort_order, column)
+        )
+        names.extend(result.scalars().all())
+    return names
 
 
 async def get_version(session: AsyncSession, id_version: uuid.UUID) -> ArticleVersion | None:

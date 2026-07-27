@@ -77,6 +77,23 @@ async def create_article(
     user: UserCtx = Depends(get_current_user),
     session=Depends(get_session),
 ) -> ArticleOut:
+    # A sub-theme must belong to the topic it was submitted under. Without this
+    # an author could send any string, and the value is displayed to reviewers
+    # and editors as if it were one of the published themes.
+    sub_topic = (body.sub_topic or "").strip() or None
+    if sub_topic is not None:
+        if body.id_topic is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "a sub-theme requires a topic to be chosen as well",
+            )
+        allowed = await repo.sub_topic_names(session, body.id_topic)
+        if sub_topic not in allowed:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "that sub-theme does not belong to the chosen topic",
+            )
+
     article = await repo.create_article(
         session,
         title=body.title,
@@ -85,6 +102,7 @@ async def create_article(
         keywords=body.keywords,
         abstract_file_path=body.abstract_file_path,
         id_topic=body.id_topic,
+        sub_topic=sub_topic,
         id_user=uuid.UUID(user.id_user),
     )
     await repo.add_article_version(

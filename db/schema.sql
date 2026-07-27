@@ -30,6 +30,9 @@ CREATE TABLE sub_topic_stem (
     id_stem     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     stem_topic  VARCHAR(150) NOT NULL,
     id_topic    UUID NOT NULL REFERENCES main_topic(id_topic) ON DELETE CASCADE,
+    -- Sub-themes are published as a numbered list, so the order is part of the
+    -- content. Without this they come back alphabetically and item 1 is wrong.
+    sort_order  INTEGER NOT NULL DEFAULT 0,
     UNIQUE (id_topic, stem_topic)
 );
 
@@ -37,6 +40,7 @@ CREATE TABLE sub_topic_humanity (
     id_humanity     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     humanity_topic  VARCHAR(150) NOT NULL,
     id_topic        UUID NOT NULL REFERENCES main_topic(id_topic) ON DELETE CASCADE,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
     UNIQUE (id_topic, humanity_topic)
 );
 
@@ -44,6 +48,7 @@ CREATE TABLE sub_topic_interdisciplinary (
     id_interdisciplinary    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     interdisciplinary_topic VARCHAR(150) NOT NULL,
     id_topic                UUID NOT NULL REFERENCES main_topic(id_topic) ON DELETE CASCADE,
+    sort_order              INTEGER NOT NULL DEFAULT 0,
     UNIQUE (id_topic, interdisciplinary_topic)
 );
 
@@ -108,6 +113,10 @@ CREATE TABLE articles (
 
     id_user                 UUID NOT NULL REFERENCES users(id_user),   -- peserta/author
     id_topic                 UUID REFERENCES main_topic(id_topic),
+    -- The sub-theme the author picked, stored as its text: the three sub-theme
+    -- tables have different keys so one column cannot reference all of them,
+    -- and the label should survive the published list being reworded.
+    sub_topic                VARCHAR(150),
     id_recommended_journal   UUID REFERENCES journal(id_journal),
 
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -307,3 +316,50 @@ In addition to exploring potential solutions, this international symposium can h
 -- real row so an admin edits rather than deletes duplicates.
 INSERT INTO schedule_item (title, description, date_text, sort_order) VALUES
     ('Registration', 'Select your participant category, and submit the required personal details.', '15 - 30 Juli 2026', 1);
+
+-- === Paper topics ===
+-- The three tracks and their sub-themes, as published for SIMIT 2026. Authors
+-- pick a main topic when submitting, and the landing page lists the sub-themes
+-- under each one. Seeded rather than left to the admin screens because with no
+-- topics at all the Sub Theme section is empty and nobody can submit anything.
+--
+-- Sub-themes live in one table per track (see the three tables above), so each
+-- block below inserts into the table matching its track.
+INSERT INTO main_topic (topic_name, description, sort_order) VALUES
+    ('STEM Studies',
+     'Engineering, environment, health, food systems and digital technology.', 1),
+    ('Social Humanity Studies',
+     'Society, education, law and economics.', 2),
+    ('Interdisciplinary Studies',
+     'Themes that cut across the natural and social sciences.', 3);
+
+INSERT INTO sub_topic_stem (id_topic, stem_topic, sort_order)
+SELECT id_topic, name, n FROM main_topic,
+    (VALUES
+        ('Energy Transition, Sustainable Engineering, and Supply Chain Resilience', 1),
+        ('Climate Change, Green Sustainability, and Environmental Resilience', 2),
+        ('Health, Biotechnology, and Quality of Life', 3),
+        ('Food Security, Agriculture, and Natural Resource Management', 4),
+        ('Digital Innovation, Artificial Intelligence, Big Data and Smart Systems', 5)
+    ) AS t(name, n)
+WHERE topic_name = 'STEM Studies';
+
+INSERT INTO sub_topic_humanity (id_topic, humanity_topic, sort_order)
+SELECT id_topic, name, n FROM main_topic,
+    (VALUES
+        ('Social Resilience, Culture Identity, and Community Empowerment', 1),
+        ('Education Transformation, Human Development, and Future Skills', 2),
+        ('Law Governance, Human Rights, and Global Peace and Security', 3),
+        ('Economic Sustainability, Entrepreneurship, and Inclusive Growth', 4)
+    ) AS t(name, n)
+WHERE topic_name = 'Social Humanity Studies';
+
+INSERT INTO sub_topic_interdisciplinary (id_topic, interdisciplinary_topic, sort_order)
+SELECT id_topic, name, n FROM main_topic,
+    (VALUES
+        ('Disaster Risk Reduction, Urban Resilience, and Sustainable Communities', 1),
+        ('Ethics, Policy, and Responsible Artificial Intelligence', 2),
+        ('Public Health, Global Social Transformation, and Human Resilience', 3),
+        ('Green Economy, Innovation Ecosystems, and Global Partnerships', 4)
+    ) AS t(name, n)
+WHERE topic_name = 'Interdisciplinary Studies';

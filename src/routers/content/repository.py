@@ -3,7 +3,17 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models import FaqItem, GalleryImage, Journal, MainTopic, ScheduleItem, SiteContent
+from ...models import (
+    FaqItem,
+    GalleryImage,
+    Journal,
+    MainTopic,
+    ScheduleItem,
+    SiteContent,
+    SubTopicHumanity,
+    SubTopicInterdisciplinary,
+    SubTopicStem,
+)
 
 
 # ---- site_content (key/value) ----
@@ -137,6 +147,30 @@ async def list_topics_ordered(session: AsyncSession) -> list[MainTopic]:
         select(MainTopic).order_by(MainTopic.sort_order, MainTopic.topic_name)
     )
     return list(result.scalars().all())
+
+
+async def sub_topics_by_topic(session: AsyncSession) -> dict[uuid.UUID, list[str]]:
+    """Every sub-theme name, grouped by the topic it belongs to.
+
+    One query per table rather than three joins onto main_topic: the tables have
+    different column names and no common parent, so there is nothing to union
+    without spelling each one out anyway.
+    """
+    grouped: dict[uuid.UUID, list[str]] = {}
+    for model, column in (
+        (SubTopicStem, SubTopicStem.stem_topic),
+        (SubTopicHumanity, SubTopicHumanity.humanity_topic),
+        (SubTopicInterdisciplinary, SubTopicInterdisciplinary.interdisciplinary_topic),
+    ):
+        # Published order first: the list is numbered, so alphabetical output
+        # puts the wrong item at number 1. Name breaks ties for rows added
+        # before sort_order existed.
+        result = await session.execute(
+            select(model.id_topic, column).order_by(model.sort_order, column)
+        )
+        for id_topic, name in result.all():
+            grouped.setdefault(id_topic, []).append(name)
+    return grouped
 
 
 async def list_journals(session: AsyncSession) -> list[Journal]:

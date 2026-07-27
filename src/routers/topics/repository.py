@@ -23,14 +23,22 @@ def to_sub_topic_out(instance, id_col: str, name_col: str) -> SubTopicOut:
 
 
 async def list_topics(session: AsyncSession) -> list[MainTopic]:
-    result = await session.execute(select(MainTopic).order_by(MainTopic.topic_name))
+    # Published order, matching the landing page and the submit form. Name only
+    # breaks ties.
+    result = await session.execute(
+        select(MainTopic).order_by(MainTopic.sort_order, MainTopic.topic_name)
+    )
     return list(result.scalars().all())
 
 
 async def list_sub_topics(session: AsyncSession, kind: str, id_topic: uuid.UUID) -> list:
     model, _, name_col = SUBTOPIC_MODELS[kind]
+    # Sub-themes are a numbered list, so their own order comes first — the
+    # submit form and the landing page both show them to authors.
     result = await session.execute(
-        select(model).where(model.id_topic == id_topic).order_by(getattr(model, name_col))
+        select(model)
+        .where(model.id_topic == id_topic)
+        .order_by(model.sort_order, getattr(model, name_col))
     )
     return list(result.scalars().all())
 
