@@ -103,6 +103,30 @@ async def update_user(
     _ensure_self_or_admin(user, id_user)
 
     updates = body.model_dump(exclude_unset=True, exclude_none=True)
+
+    # Changing someone's role, or their sign-in address, is not self-service.
+    for admin_only in ("name_role", "email"):
+        if admin_only in updates and user.role != "admin":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, f"only admin may change {admin_only}"
+            )
+
+    if "name_role" in updates:
+        role = await reference_repo.get_role_by_name(session, updates.pop("name_role"))
+        if role is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown name_role")
+        updates["id_role"] = role.id_role
+
+    if "email" in updates and await repo.email_exists(session, updates["email"], exclude=id_user):
+        raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
+
+    if "occupation_name" in updates:
+        # Resolved the same way as on create, so an occupation typed here joins
+        # the shared list instead of becoming a private string.
+        updates["id_occupation"] = await reference_repo.get_or_create_occupation(
+            session, updates.pop("occupation_name")
+        )
+
     if "password" in updates:
         updates["password_hash"] = hash_password(updates.pop("password"))
     if not updates:

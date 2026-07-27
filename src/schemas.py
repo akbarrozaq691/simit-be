@@ -89,6 +89,15 @@ class NormalisedContact(BaseModel):
     @classmethod
     def _clean_phone(cls, value: str | None) -> str | None:
         cleaned = normalize_phone(value)
+        # Text with no digits at all normalises to None, and None is legitimate
+        # because the field is optional — so "not a phone" used to be accepted
+        # and silently stored as nothing, while "123" was correctly rejected.
+        # Someone who typed something meant to give a number: say it is wrong.
+        if value is not None and value.strip() and cleaned is None:
+            raise ValueError(
+                "phone_number must include the country code in international format, "
+                "e.g. +905551234567"
+            )
         if not is_valid_phone(cleaned):
             raise ValueError(
                 "phone_number must include the country code in international format, "
@@ -184,6 +193,12 @@ class UserCreate(NormalisedContact):
 
 class UserUpdate(NormalisedContact):
     user_name: str | None = None
+    # Email and role were missing, so an admin editing an account could change a
+    # name but not fix a typo in the address or move someone between roles —
+    # the two things the screen exists for. Both are admin-only at the router.
+    email: EmailStr | None = None
+    name_role: str | None = None
+    occupation_name: str | None = None
     institution_name: str | None = None
     phone_number: str | None = None
     password: str | None = Field(default=None, min_length=6)

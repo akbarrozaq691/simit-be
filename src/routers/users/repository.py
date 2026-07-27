@@ -69,8 +69,15 @@ async def get_user(
     return result.scalar_one_or_none()
 
 
-async def email_exists(session: AsyncSession, email: str) -> bool:
-    result = await session.execute(select(User.id_user).where(User.email == email))
+async def email_exists(
+    session: AsyncSession, email: str, exclude: uuid.UUID | None = None
+) -> bool:
+    """Whether the address is taken. `exclude` skips one account, so saving an
+    edit without touching the email does not collide with itself."""
+    stmt = select(User.id_user).where(User.email == email)
+    if exclude is not None:
+        stmt = stmt.where(User.id_user != exclude)
+    result = await session.execute(stmt)
     return result.scalar_one_or_none() is not None
 
 
@@ -109,6 +116,17 @@ async def update_user(session: AsyncSession, id_user: uuid.UUID, updates: dict) 
     for key, value in updates.items():
         setattr(user, key, value)
     await session.flush()
+
+    # Changing a foreign key does not update the relationship already loaded on
+    # this instance, so the response echoed the OLD role or occupation while the
+    # database held the new one — a client trusting the reply showed stale data.
+    stale = [
+        name
+        for column, name in (("id_role", "role"), ("id_occupation", "occupation"))
+        if column in updates
+    ]
+    if stale:
+        await session.refresh(user, attribute_names=stale)
     return user
 
 
