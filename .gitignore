@@ -19,3 +19,8 @@ agentdb.rvf.idmap.json
 
 # Local test fixture, not part of the build
 tes.pdf
+
+# Reference material for building the timeline and pipeline, not part of the app
+timeline 1.jpeg
+timeline 2.jpeg
+Workflow SIMIT.png
