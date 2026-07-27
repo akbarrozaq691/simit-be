@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, File, UploadFile
 
 from ... import uploads
-from ...deps import get_current_user
+from ...deps import get_current_user, require_roles
 from ...schemas import UploadResponse, UserCtx
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
@@ -25,4 +25,20 @@ async def upload_pdf(
     enforces its own ownership rules.
     """
     path = await uploads.store_pdf(file)
+    return UploadResponse(file_path=path)
+
+
+@router.post("/image", response_model=UploadResponse)
+async def upload_image(
+    file: UploadFile = File(...),
+    _: UserCtx = Depends(require_roles("admin")),
+) -> UploadResponse:
+    """Stores a landing-page image and returns its path.
+
+    Admin-only, unlike the paper upload above: the only consumers are the site
+    content screens (hero background, gallery photos), and the stored files are
+    served to the public, so the set of people who can put bytes there stays as
+    small as the feature needs.
+    """
+    path = await uploads.store_image(file)
     return UploadResponse(file_path=path)

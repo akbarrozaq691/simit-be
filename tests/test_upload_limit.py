@@ -4,6 +4,7 @@ exercise the size check directly — the endpoints themselves need a live app
 plus configured storage, covered by manual verification."""
 
 import pytest
+from fastapi import HTTPException
 
 from src import uploads
 from src.settings import settings
@@ -29,3 +30,52 @@ def test_max_upload_bytes_derived_from_settings():
 def test_exceeds_limit_boundary(offset, should_reject):
     content = b"x" * (LIMIT + offset)
     assert uploads.exceeds_upload_limit(content) is should_reject
+
+
+class _StubUpload:
+    """Minimal stand-in for Starlette's UploadFile: only the attributes the
+    validation path in `src/uploads.py` actually touches."""
+
+    def __init__(self, content_type: str | None, filename: str = "f") -> None:
+        self.content_type = content_type
+        self.filename = filename
+
+    async def read(self, size: int) -> bytes:
+        return b""
+
+
+@pytest.mark.parametrize(
+    "content_type", ["image/png", "image/jpeg", "image/webp", "image/gif"]
+)
+def test_allowed_image_types(content_type):
+    assert content_type in uploads.ALLOWED_IMAGE_TYPES
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        # SVG carries script and these files are served back to visitors.
+        "image/svg+xml",
+        "application/pdf",
+        "text/html",
+        "application/octet-stream",
+        None,
+    ],
+)
+def test_rejected_image_types(content_type):
+    assert content_type not in uploads.ALLOWED_IMAGE_TYPES
+
+
+@pytest.mark.asyncio
+async def test_store_image_rejects_non_image():
+    with pytest.raises(HTTPException) as exc:
+        await uploads.store_image(_StubUpload("image/svg+xml"))
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_store_pdf_rejects_image():
+    """The two entry points must not have merged into a permissive one."""
+    with pytest.raises(HTTPException) as exc:
+        await uploads.store_pdf(_StubUpload("image/png"))
+    assert exc.value.status_code == 400

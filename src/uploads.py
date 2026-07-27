@@ -1,8 +1,8 @@
-"""Shared PDF upload handling.
+"""Shared upload handling.
 
-Both `POST /uploads` (standalone, used before an article exists) and
-`POST /articles/{id}/upload` (legacy, kept for existing callers) validate and
-store a file the same way — the rules live here so the two cannot drift apart.
+Papers (`POST /uploads`, and the legacy `POST /articles/{id}/upload`) and
+landing-page images (`POST /uploads/image`) validate and store files the same
+way — the rules live here so the callers cannot drift apart.
 """
 
 from fastapi import HTTPException, UploadFile, status
@@ -12,9 +12,37 @@ from .settings import settings
 
 MAX_UPLOAD_BYTES = settings.max_upload_mb * 1024 * 1024
 
+# Raster formats every browser renders, plus WebP for the smaller payloads the
+# landing page prefers. SVG is excluded on purpose: it is a script-carrying
+# document, and these files are served back to visitors.
+ALLOWED_IMAGE_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/webp", "image/gif"}
+)
+
 
 def exceeds_upload_limit(content: bytes) -> bool:
     return len(content) > MAX_UPLOAD_BYTES
+
+
+async def _read_within_limit(file: UploadFile) -> bytes:
+    # Read one byte past the limit: enough to detect an oversized upload
+    # without ever buffering the whole thing.
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if exceeds_upload_limit(content):
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"file too large (max {settings.max_upload_mb} MB)",
+        )
+    return content
+
+
+async def _store(file: UploadFile, content: bytes, fallback_name: str) -> str:
+    try:
+        return await storage.client.upload(
+            file.filename or fallback_name, content, file.content_type
+        )
+    except storage.StorageNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
 
 
 async def store_pdf(file: UploadFile) -> str:
@@ -26,18 +54,21 @@ async def store_pdf(file: UploadFile) -> str:
     if file.content_type != "application/pdf":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "only PDF files are accepted")
 
-    # Read one byte past the limit: enough to detect an oversized upload
-    # without ever buffering the whole thing.
-    content = await file.read(MAX_UPLOAD_BYTES + 1)
-    if exceeds_upload_limit(content):
+    content = await _read_within_limit(file)
+    return await _store(file, content, "upload.pdf")
+
+
+async def store_image(file: UploadFile) -> str:
+    """Validates an image upload and stores it, returning its storage path.
+
+    Same size ceiling and failure codes as `store_pdf`; only the accepted
+    content types differ.
+    """
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"file too large (max {settings.max_upload_mb} MB)",
+            status.HTTP_400_BAD_REQUEST,
+            "only PNG, JPEG, WebP or GIF images are accepted",
         )
 
-    try:
-        return await storage.client.upload(
-            file.filename or "upload.pdf", content, file.content_type
-        )
-    except storage.StorageNotConfiguredError as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
+    content = await _read_within_limit(file)
+    return await _store(file, content, "upload.png")
