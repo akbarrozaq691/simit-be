@@ -9,3 +9,10 @@ venv/
 .superpowers/
 .pytest_cache/
 db/backups/
+
+# ruflo local memory store
+agentdb.rvf
+agentdb.rvf.idmap.json
+
+# playwright verification artefacts
+.playwright-mcp/
