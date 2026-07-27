@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 
-from ... import article_state, audit, emailer, uploads
+from ... import article_state, audit, emailer, storage, uploads
 from ...deps import get_current_user, get_session, require_roles
 from ...schemas import (
     AbstractAnnounceRequest,
@@ -15,6 +15,7 @@ from ...schemas import (
     ArticleUpdate,
     ArticleVersionOut,
     AssignReviewersRequest,
+    DownloadUrlOut,
     FullPaperAnnounceRequest,
     FullPaperReviewRequest,
     UploadResponse,
@@ -23,6 +24,10 @@ from ...schemas import (
 from . import repository as repo
 
 router = APIRouter(prefix="/articles", tags=["articles"])
+
+# Long enough to click through and open the PDF, short enough that a link
+# pasted into a chat is dead before it can be shared onward.
+DOWNLOAD_URL_TTL_SECONDS = 300
 
 
 def _not_found() -> HTTPException:
@@ -625,6 +630,61 @@ async def list_article_versions(
     await _check_view_permission(session, article, user)
     versions = await repo.list_versions(session, id_article)
     return [ArticleVersionOut.model_validate(v) for v in versions]
+
+
+@router.get("/{id_article}/versions/{id_version}/download", response_model=DownloadUrlOut)
+async def download_article_version(
+    id_article: uuid.UUID,
+    id_version: uuid.UUID,
+    user: UserCtx = Depends(get_current_user),
+    session=Depends(get_session),
+) -> DownloadUrlOut:
+    """Mints a short-lived URL for one version's PDF.
+
+    Papers are stored privately, so a stored path is useless on its own — this
+    endpoint is the only way to read one. The permission check is the same one
+    that guards viewing the article, applied before any URL exists: an author
+    reaches only their own submissions, a reviewer only what they are assigned.
+
+    The version must belong to the article in the path. Without that check, an
+    id from someone else's submission would be signed for anyone holding one
+    valid article id of their own.
+    """
+    article = await repo.get_article(
+        session, id_article, include_deleted=(user.role == "admin")
+    )
+    if article is None:
+        raise _not_found()
+    await _check_view_permission(session, article, user)
+
+    version = await repo.get_version(session, id_version)
+    if version is None or version.id_article != id_article:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "version not found")
+
+    try:
+        url = await storage.client.presigned_url(version.file_path, DOWNLOAD_URL_TTL_SECONDS)
+    except storage.StorageNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
+    except storage.UnsignableFileError as exc:
+        # A row pointing outside the configured bucket cannot be served. Name
+        # the reason so an organiser can tell it is that one submission, not
+        # the download feature, that is broken.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+
+    # Who read a confidential paper, and when, is worth keeping.
+    await audit.record(
+        session,
+        id_actor=uuid.UUID(user.id_user),
+        action="article.file_downloaded",
+        entity_type="article",
+        entity_id=id_article,
+        detail={
+            "id_version": str(id_version),
+            "phase": version.phase,
+            "version_number": version.version_number,
+        },
+    )
+    return DownloadUrlOut(download_url=url, expires_in=DOWNLOAD_URL_TTL_SECONDS)
 
 
 @router.post(

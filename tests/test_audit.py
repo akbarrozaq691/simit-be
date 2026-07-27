@@ -12,6 +12,7 @@ EXPECTED_ACTIONS = {
     "article.deleted",
     "article.restored",
     "article.version_submitted",
+    "article.file_downloaded",
     "reviewer.assigned",
     "reviewer.unassigned",
     "review.submitted",

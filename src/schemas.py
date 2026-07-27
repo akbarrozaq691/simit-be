@@ -391,6 +391,20 @@ class UploadResponse(BaseModel):
     file_path: str
 
 
+class DownloadUrlOut(BaseModel):
+    """A short-lived URL for one private file.
+
+    Returned as JSON rather than a 302 so the browser fetches the object
+    directly, with no Authorization header of ours attached — S3-compatible
+    endpoints reject a request that carries both a signature and a bearer
+    token. `expires_in` is seconds, so a client can say how long the link lasts
+    instead of guessing.
+    """
+
+    download_url: str
+    expires_in: int
+
+
 class ArticleFullPaperRequest(BaseModel):
     full_paper_file_path: str
 

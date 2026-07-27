@@ -161,6 +161,10 @@ async def list_versions(session: AsyncSession, id_article: uuid.UUID) -> list[Ar
     return list(result.scalars().all())
 
 
+async def get_version(session: AsyncSession, id_version: uuid.UUID) -> ArticleVersion | None:
+    return await session.get(ArticleVersion, id_version)
+
+
 # ---- Reviewer assignment ----
 
 

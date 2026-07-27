@@ -18,6 +18,27 @@ class StorageNotConfiguredError(RuntimeError):
     pass
 
 
+class UnsignableFileError(RuntimeError):
+    """The stored path does not point at the configured bucket, so no signature
+    can be produced for it — a leftover placeholder, or a row written while a
+    different bucket was configured."""
+
+
+def key_for(file_path: str) -> str:
+    """Recovers the object key from a URL that `upload` produced.
+
+    `upload` returns `{base_url}/{bucket}/{key}`, so the key is whatever follows
+    the bucket segment. Matching on that segment rather than stripping a fixed
+    prefix keeps working when the base URL gains or loses a trailing slash.
+    """
+    marker = f"/{settings.storage_bucket}/"
+    if not settings.storage_bucket or marker not in file_path:
+        raise UnsignableFileError(
+            f"stored path does not belong to bucket {settings.storage_bucket!r}"
+        )
+    return file_path.split(marker, 1)[1]
+
+
 class StorageClient:
     def _make_s3_client(self):
         return boto3.client(
@@ -59,6 +80,30 @@ class StorageClient:
 
         await asyncio.to_thread(_put)
         return f"{settings.storage_base_url}/{settings.storage_bucket}/{key}"
+
+    async def presigned_url(self, file_path: str, expires_in: int) -> str:
+        """A short-lived URL that grants read access to one private object.
+
+        This is how papers reach the people entitled to read them without being
+        made public: the caller's permission is checked against the database
+        first, and only then is a URL minted that stops working shortly after.
+        """
+        if not settings.storage_base_url or not settings.storage_bucket:
+            raise StorageNotConfiguredError(
+                "storage is not configured — set storage_base_url and storage_bucket"
+            )
+
+        key = key_for(file_path)
+
+        def _sign() -> str:
+            s3 = self._make_s3_client()
+            return s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": settings.storage_bucket, "Key": key},
+                ExpiresIn=expires_in,
+            )
+
+        return await asyncio.to_thread(_sign)
 
 
 client = StorageClient()
